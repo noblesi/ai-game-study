@@ -313,17 +313,19 @@ def search_unit_menu_for_select(units: List[Unit]) -> Optional[int]:
     return original_index
 
 def advanced_search_menu(units: List[Unit]) -> None:
-    ##레벨/ATK/HP 기준으로 필터해서 보여주는 고급검색 메뉴##
+    ##레벨/ATK/HP/코스트/역할/타겟 타입 기준으로 필터해서 보여주는 고급검색 메뉴##
     if not units:
         print("\n[알림] 등록된 유닛이 없습니다. 먼저 유닛을 추가하세요.\n")
         return
 
     while True:
-        print("\n[고급 검색/필터]")
+        print("\n[고금 검색/필터]")
         print("1) 최소 레벨 이상 유닛 보기")
         print("2) 최소 ATK 이상 유닛 보기")
         print("3) 최대 HP 이하 유닛 보기")
         print("4) 최대 코스트 이하 유닛 보기")
+        print("5) 역할(Role)로 필터")
+        print("6) 타겟 타입으로 필터 (ground/air/both)")
         print("0) 돌아가기")
 
         choice = input("번호를 선택하세요: ").strip()
@@ -343,7 +345,7 @@ def advanced_search_menu(units: List[Unit]) -> None:
                 if u.atk >= min_atk
             ]
             print_indexed_results(results, f"ATK >= {min_atk}")
-
+        
         elif choice == "3":
             max_hp = input_int("최대 HP를 입력하세요: ", allow_negative=False)
             results = [
@@ -351,7 +353,7 @@ def advanced_search_menu(units: List[Unit]) -> None:
                 if u.hp <= max_hp
             ]
             print_indexed_results(results, f"HP <= {max_hp}")
-
+        
         elif choice == "4":
             max_cost = input_int("최대 코스트를 입력하세요: ", allow_negative=False)
             results = [
@@ -360,12 +362,34 @@ def advanced_search_menu(units: List[Unit]) -> None:
             ]
             print_indexed_results(results, f"Cost <= {max_cost}")
 
+        elif choice == "5":
+            role = input_non_empty(
+                "필터할 역할(Role)을 입력하세요 (예: tower/enemy/hero): "
+            )
+            role_key = role.strip().lower()
+            results = [
+                (i, u) for i, u in enumerate(units)
+                if u.role.lower() == role_key
+            ]
+            print_indexed_results(results, f"Role == {role_key}")
+
+        elif choice == "6":
+            target = input_non_empty(
+                "필터할 타겟 타입을 입력하세요 (ground/air/both): "
+            )
+            target_key = target.strip().lower()
+            results = [
+                (i, u) for i, u in enumerate(units)
+                if u.target_type.lower() == target_key
+            ]
+            print_indexed_results(results, f"TargetType == {target_key}")
+
         elif choice == "0":
             print("고급 검색/필터 메뉴를 종료합니다.\n")
             return
-
+        
         else:
-            print("잘못된 번호입니다. 0~4 중에서 선택해주세요.\n")
+            print("잘못된 번호입니다. 0~6 중에서 선택해주세요.\n")
 
 # ============================
 # 유닛 수정 서브 함수들
