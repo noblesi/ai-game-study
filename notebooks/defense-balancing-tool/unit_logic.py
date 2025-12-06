@@ -31,7 +31,8 @@ def format_unit_brief(unit: Unit) -> str:
     return (
         f"{unit.name} "
         f"(Lv.{unit.level} / HP:{unit.hp} / ATK:{unit.atk} / "
-        f"Role:{unit.role} / Cost:{unit.cost})"
+        f"Role:{unit.role} / Type:{unit.attack_type} / "
+        f"Cost:{unit.cost} / Range:{unit.range})"
     )
 
 def print_unit_detail(unit: Unit) -> None:
@@ -44,6 +45,7 @@ def print_unit_detail(unit: Unit) -> None:
     print(f"ATK        : {unit.atk}")
     print(f"코스트      : {unit.cost}")
     print(f"사거리      : {unit.range}")
+    print(f"공격 타입   : {unit.attack_type}")
     print(f"공격 속도   : {unit.attack_speed}")
     print(f"이동 속도   : {unit.move_speed}")
     print(f"타겟 타입   : {unit.target_type}")
@@ -96,22 +98,27 @@ def print_units_stats(units: List[Unit]) -> None:
     total_level = sum(u.level for u in units)
     total_hp = sum(u.hp for u in units)
     total_atk = sum(u.atk for u in units)
+    total_dps = sum(u.atk * u.attack_speed for u in units)  
 
     avg_level = total_level / count
     avg_hp = total_hp / count
     avg_atk = total_atk / count
+    avg_dps = total_dps / count  
 
     highest_level_unit = max(units, key=lambda u: u.level)
     highest_atk_unit = max(units, key=lambda u: u.atk)
+    highest_dps_unit = max(units, key=lambda u: u.atk * u.attack_speed) 
 
     print("\n=== 유닛 통계 ===")
     print(f"총 유닛 수: {count}")
     print(f"평균 레벨: {avg_level:.1f}")
     print(f"평균 HP   : {avg_hp:.1f}")
     print(f"평균 ATK  : {avg_atk:.1f}")
+    print(f"평균 DPS  : {avg_dps:.1f}")
     print()
     print(f"최고 레벨 유닛: {format_unit_brief(highest_level_unit)}")
     print(f"최고 ATK 유닛 : {format_unit_brief(highest_atk_unit)}")
+    print(f"최고 DPS 유닛 : {format_unit_brief(highest_dps_unit)}")
     print()
 
 # ============================
@@ -151,6 +158,11 @@ def add_unit_menu(units: List[Unit]) -> None:
     ).strip()
     target_type = target_raw or "ground"
 
+    attack_raw = input(
+        "공격 타입을 입력하세요 (melee/ranged/magic, 기본값: melee): "
+    ).strip()
+    attack_type = attack_raw or "melee"
+
     unit = Unit(
         name=name,
         level=level,
@@ -160,6 +172,7 @@ def add_unit_menu(units: List[Unit]) -> None:
         range=range_,
         cost=cost,
         target_type=target_type,
+        attack_type=attack_type,   
     )
     units.append(unit)
     print(f"'{name}' 유닛을 추가했습니다.\n")
@@ -326,6 +339,7 @@ def advanced_search_menu(units: List[Unit]) -> None:
         print("4) 최대 코스트 이하 유닛 보기")
         print("5) 역할(Role)로 필터")
         print("6) 타겟 타입으로 필터 (ground/air/both)")
+        print("7) 공격 타입으로 필터 (melee/ranged/magic)")
         print("0) 돌아가기")
 
         choice = input("번호를 선택하세요: ").strip()
@@ -383,6 +397,17 @@ def advanced_search_menu(units: List[Unit]) -> None:
                 if u.target_type.lower() == target_key
             ]
             print_indexed_results(results, f"TargetType == {target_key}")
+
+        elif choice == "7": 
+            attack = input_non_empty(
+                "필터할 공격 타입을 입력하세요 (melee/ranged/magic 등): "
+            )
+            atk_type_key = attack.strip().lower()
+            results = [
+                (i, u) for i, u in enumerate(units)
+                if u.attack_type.lower() == atk_type_key
+            ]
+            print_indexed_results(results, f"AttackType == {atk_type_key}")
 
         elif choice == "0":
             print("고급 검색/필터 메뉴를 종료합니다.\n")
@@ -450,6 +475,20 @@ def _edit_unit_range(unit: Unit) -> None:
     print(f"사거리: {unit.range} -> {new_range}")
     unit.range = new_range
     print("사거리가 변경되었습니다.\n")
+
+def _edit_unit_attack_type(unit: Unit) -> None:
+    print(f"현재 공격 타입: {unit.attack_type}")
+    raw = input(
+        "새 공격 타입을 입력하세요 (melee/ranged/magic 등, 빈 입력 = 변경 안함): "
+    ).strip()
+    if not raw:
+        print("공격 타입 변경을 취소했습니다.\n")
+        return
+    
+    print(f"공격 타입: {unit.attack_type} -> {raw}")
+    unit.attack_type = raw
+    print("공격 타입이 변경되었습니다.\n")
+
 
 def _edit_unit_target_type(unit: Unit) -> None:
     print(f"현재 타겟 타입: {unit.target_type}")
@@ -530,6 +569,7 @@ def edit_unit_menu(units: List[Unit]) -> None:
         print("9) 이동 속도 수정")
         print("10) 타겟 타입 수정")
         print("11) 성장 계수(레벨당 HP/ATK) 수정")
+        print("12) 공격 타입 수정")
         print("0) 취소 (수정 메뉴 종료)")
 
         choice = input("번호를 선택하세요: ").strip()
@@ -556,8 +596,165 @@ def edit_unit_menu(units: List[Unit]) -> None:
             _edit_unit_target_type(unit)
         elif choice == "11":
             _edit_unit_growth(unit)
+        elif choice == "12":
+            _edit_unit_attack_type(unit)
         elif choice == "0":
             print("유닛 정보 수정을 종료합니다.\n")
             return
         else:
             print("잘못된 번호입니다. 0~11 중에서 선택해주세요.\n")
+
+
+def simulate_duel(attacker: Unit, defender: Unit, verbose: bool = True) -> dict:
+    ##공격자/방어자 1:1 전투 시뮬레이션##
+    ## attack_speed: 초당 공격 횟수##
+    ## atk: 공격력 ##
+    ## hp: 현재 체력 ##
+
+    a_hp = attacker.hp
+    d_hp = defender.hp
+
+    if attacker.attack_speed <= 0 and defender.attacker_speed <= 0:
+        if verbose:
+            print("양쪽 모두 공격 속도가 0이라 전투가 진행되지 않습니다.")
+        return {
+            "winner": "none",
+            "time": 0.0,
+            "attacker_final_hp": a_hp,
+            "defender_final_hp": d_hp,
+            "attacker_attacks": 0,
+            "defender_attacks": 0,
+        }
+    
+    ## 공격 간격(초) = 1 / 공격 속도
+    a_interval = float("inf") if attacker.attack_speed <= 0 else 1.0 / attacker.attack_speed
+    d_interval = float("inf") if defender.attack_speed <= 0 else 1.0 / defender.attack_speed
+
+    time = 0.0
+    next_a = 0.0
+    next_d = 0.0
+    a_attacks = 0
+    d_attacks = 0
+
+    max_steps = 10000
+    eps = 1e-9
+
+    for _ in range(max_steps):
+        if a_hp <= 0 or d_hp <= 0:
+            break
+
+        next_event = min(next_a, next_d)
+        if next_event == float("inf"):
+            break
+
+        time = next_event
+
+        # 공격자 턴
+        if next_a <= next_event + eps:
+            d_hp -= attacker.atk
+            a_attacks += 1
+            if verbose:
+                print(
+                    f"[{time:.2f}s] {attacker.name} -> {defender.name} "
+                    f"({attacker.atk} 피해, {defender.name} HP {max(d_hp, 0)})"
+                )
+            next_a += a_interval
+
+        # 방어자 턴 (아직 살아있다면)
+        if d_hp > 0 and next_d <= next_event + eps:
+            a_hp -= defender.atk
+            d_attacks += 1
+            if verbose:
+                print(
+                    f"[{time:.2f}s] {defender.name} -> {attacker.name} "
+                    f"({defender.atk} 피해, {attacker.name} HP {max(a_hp, 0)})"
+                )
+            next_d += d_interval
+
+        if a_hp <= 0 or d_hp <= 0:
+            break
+    else:
+        if verbose:
+            print("[주의] 최대 스텝에 도달하여 전투를 강제 종료했습니다.")
+
+    # 승패 판정
+    if a_hp > 0 and d_hp <= 0:
+        winner = "attacker"
+    elif d_hp >0 and a_hp <= 0:
+        winner = "defender"
+    elif a_hp <= 0 and d_hp <= 0:
+        winner = "draw"
+    else:
+        winner = "none"
+
+    return{
+        "winner": winner,
+        "time": time,
+        "attacker_final_hp": max(a_hp, 0),
+        "defender_final_hp": max(d_hp, 0),
+        "attacker_attacks": a_attacks,
+        "defender_attacks": d_attacks,
+    }
+
+def battle_simulation_menu(units: List[Unit]) -> None:
+    ##유닛 2개를 골라 1:1 전투를 시뮬레이션하는 메뉴##
+    if not units:
+        print("\n[알림] 등록된 유닛이 없습니다. 먼저 유닛을 추가하세요.\n")
+        return
+
+    print("\n[전투 시뮬레이션 - 1 대 1]")
+    print("선택한 두 유닛이 현재 스탯(HP / ATK / 공격 속도 기준)으로 싸웠을 때,")
+    print("어느 쪽이 이기는지와 걸리는 시간을 확인할 수 있습니다.\n")
+
+    # 1) 공격자 선택
+    print("[공격자 선택]")
+    attacker_index = search_unit_menu_for_select(units)
+    if attacker_index is None:
+        print("전투 시뮬레이션을 취소합니다.\n")
+        return
+
+    # 2) 방어자 선택
+    print("[방어자 선택]")
+    defender_index = search_unit_menu_for_select(units)
+    if defender_index is None:
+        print("전투 시뮬레이션을 취소합니다.\n")
+        return
+
+    attacker = units[attacker_index]
+    defender = units[defender_index]
+
+    # 3) 선택 결과 출력
+    print("\n=== 선택된 유닛 ===")
+    print("[공격자]")
+    print_unit_detail(attacker)
+    print("[방어자]")
+    print_unit_detail(defender)
+
+    if not confirm_yes_no("이 구성으로 전투 시뮬레이션을 실행할까요? (y/n): "):
+        print("전투 시뮬레이션을 취소했습니다.\n")
+        return
+
+    verbose = confirm_yes_no("전투 로그를 턴마다 출력할까요? (y/n): ")
+
+    # 4) 전투 실행
+    print("\n=== 전투 시작 ===")
+    result = simulate_duel(attacker, defender, verbose=verbose)
+
+    # 5) 결과 요약 출력
+    print("\n=== 전투 결과 요약 ===")
+    print(f"총 경과 시간      : {result['time']:.2f}초")
+    print(f"공격자 공격 횟수  : {result['attacker_attacks']}")
+    print(f"방어자 공격 횟수  : {result['defender_attacks']}")
+    print(f"공격자 최종 HP    : {result['attacker_final_hp']}")
+    print(f"방어자 최종 HP    : {result['defender_final_hp']}")
+
+    winner = result["winner"]
+    if winner == "attacker":
+        print(f"승자: 공격자 {attacker.name}")
+    elif winner == "defender":
+        print(f"승자: 방어자 {defender.name}")
+    elif winner == "draw":
+        print("결과: 동시 사망 (무승부)")
+    else:
+        print("결과: 어느 쪽도 상대를 쓰러뜨리지 못했습니다.")
+    print()

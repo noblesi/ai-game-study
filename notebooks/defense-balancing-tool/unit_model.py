@@ -17,6 +17,7 @@ class Unit:
     attack_speed: float = 1.0
     move_speed: float = 1.0
     target_type: str = "ground"
+    attack_type: str = "melee"
 
     ##성장계수(레벨업 시 증가량)##
     hp_per_level: int = 30
@@ -40,6 +41,7 @@ class Unit:
             "attack_speed": self.attack_speed,
             "move_speed": self.move_speed,
             "target_type": self.target_type,
+            "attack_type": self.attack_type,
             "hp_per_level": self.hp_per_level,
             "atk_per_level": self.atk_per_level,
         }
@@ -57,6 +59,7 @@ class Unit:
             attack_speed=data.get("attack_speed", 1.0),
             move_speed=data.get("move_speed", 1.0),
             target_type=data.get("target_type", "ground"),
+            attack_type=data.get("attack_type", "melee"),
             hp_per_level=data.get("hp_per_level", 30),
             atk_per_level=data.get("atk_per_level", 5),
         )
