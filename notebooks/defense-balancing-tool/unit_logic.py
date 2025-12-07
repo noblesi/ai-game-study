@@ -604,12 +604,54 @@ def edit_unit_menu(units: List[Unit]) -> None:
         else:
             print("잘못된 번호입니다. 0~11 중에서 선택해주세요.\n")
 
+def _get_unit_kind(unit: Unit) -> str:
+    ##role로부터 유닛이 ground/ari/tower 계열인지 유추##
+    r = unit.role.lower()
+    if "air" in r:
+        return "air"
+    if "tower" in r:
+        return "tower"
+    # boss_enemy, ground_enemy 등은 모두 지상으로 취급
+    return "ground"
 
-def simulate_duel(attacker: Unit, defender: Unit, verbose: bool = True) -> dict:
-    ##공격자/방어자 1:1 전투 시뮬레이션##
-    ## attack_speed: 초당 공격 횟수##
-    ## atk: 공격력 ##
-    ## hp: 현재 체력 ##
+def _can_attack_target(attacker: Unit, defender: Unit) -> bool:
+    ##attacker.target_type 과 defender.role(또는 kind)를 비교해서 공격 가능 여부를 판단##
+    atk_target = attacker.target_type.lower()
+    def_kind = _get_unit_kind(defender)
+
+    if atk_target == "both":
+        return True
+    if atk_target == "ground":
+        return def_kind == "ground"
+    if atk_target == "air":
+        return def_kind == "air"
+    if atk_target == "tower":
+        return def_kind == "tower"
+
+    # 기타 값들은 일단 느슨하게 매칭
+    return atk_target == def_kind
+
+def _is_in_attack_range(attacker: Unit, defender: Unit, distance: float) -> bool:
+    ##공격 타입에 따라 사거리 판정##
+    atk_type = attacker.attack_type.lower()
+    if atk_type == "melee":
+        melee_range = 1.0
+        return distance <= melee_range
+    else:
+        # ranged, magic 등의 경우 Unit.range 사용
+        return distance <= attacker.range
+
+def simulate_duel(attacker: Unit, defender: Unit,
+                  initial_distance: float = 5.0,
+                  verbose: bool = True) -> dict:
+    """
+    사거리/이동속도/타겟타입/공격타입을 고려한 1:1 전투 시뮬레이션
+
+    - 1차원 레인 위에 두 유닛을 두고,
+      시간에 따라 거리 = initial_distance - (move_speed 합) * t 로 줄어듦
+    - 공격 속도 → 1 / attack_speed 간격으로 공격 이벤트 발생
+    - 근접/원거리/마법, ground/air/both 타겟 타입 등을 사용
+    """
 
     a_hp = attacker.hp
     d_hp = defender.hp
@@ -626,68 +668,109 @@ def simulate_duel(attacker: Unit, defender: Unit, verbose: bool = True) -> dict:
             "defender_attacks": 0,
         }
     
-    ## 공격 간격(초) = 1 / 공격 속도
+    # 1) 공격 간격 계산
     a_interval = float("inf") if attacker.attack_speed <= 0 else 1.0 / attacker.attack_speed
     d_interval = float("inf") if defender.attack_speed <= 0 else 1.0 / defender.attack_speed
 
     time = 0.0
-    next_a = 0.0
-    next_d = 0.0
+    next_a = 0.0 if a_interval != float("inf") else float("inf")
+    next_d = 0.0 if d_interval != float("inf") else float("inf")
     a_attacks = 0
     d_attacks = 0
 
-    max_steps = 10000
+    # 2) 상대방 방향으로의 상대 속도 (타워는 move_speed=0)
+    rel_speed = max(attacker.move_speed, 0.0) + max(defender.move_speed, 0.0)
     eps = 1e-9
+    max_steps = 10000
 
+    def _max_effective_range(u: Unit) -> float:
+        if u.attack_speed <= 0:
+            return 0.0
+        if u.attack_type.lower() == "melee":
+            return 1.0
+        return float(u.range)
+    
+    # 3) 아무도 움직이지 않고, 서로 사거리 밖이면 전투 불가
+    max_range = max(_max_effective_range(attacker), _max_effective_range(defender))
+    if rel_speed <= 0 and initial_distance > max_range:
+        if verbose:
+            print("서로 사거리 안에 들어갈 수 없어 전투가 발생하지 않습니다.")
+        return {
+            "winner": "none",
+            "time": 0.0,
+            "attacker_final_hp": a_hp,
+            "defender_final_hp": d_hp,
+            "attacker_attacks": 0,
+            "defender_attacks": 0,
+        }
+
+    # 4) 메인 루프
     for _ in range(max_steps):
         if a_hp <= 0 or d_hp <= 0:
             break
 
         next_event = min(next_a, next_d)
         if next_event == float("inf"):
+            if verbose:
+                print("더 이상 공격 이벤트가 없어 전투를 종료합니다.")
             break
 
         time = next_event
 
+        # 현재 시간에서의 거리 계산
+        if rel_speed > 0:
+            distance = max(0.0, initial_distance - rel_speed * time)
+        else:
+            distance = initial_distance
+
+        if verbose:
+            print(f"\n[시간 {time:.2f}s] 거리:{distance:.2f}, "
+                  f"{attacker.name} HP:{a_hp}, {defender.name} HP:{d_hp}")
+
         # 공격자 턴
         if next_a <= next_event + eps:
-            d_hp -= attacker.atk
-            a_attacks += 1
-            if verbose:
-                print(
-                    f"[{time:.2f}s] {attacker.name} -> {defender.name} "
-                    f"({attacker.atk} 피해, {defender.name} HP {max(d_hp, 0)})"
-                )
+            if _can_attack_target(attacker, defender) and _is_in_attack_range(attacker, defender, distance):
+                d_hp -= attacker.atk
+                a_attacks += 1
+                if verbose:
+                    print(f"  {attacker.name} -> {defender.name} "
+                          f"({attacker.atk} 피해, {defender.name} HP {max(d_hp, 0)})")
+            else:
+                if verbose:
+                    print(f"  {attacker.name} 공격 불가 (사거리/타겟 조건 미충족)")
             next_a += a_interval
 
-        # 방어자 턴 (아직 살아있다면)
+        # 방어자 턴
         if d_hp > 0 and next_d <= next_event + eps:
-            a_hp -= defender.atk
-            d_attacks += 1
-            if verbose:
-                print(
-                    f"[{time:.2f}s] {defender.name} -> {attacker.name} "
-                    f"({defender.atk} 피해, {attacker.name} HP {max(a_hp, 0)})"
-                )
+            if _can_attack_target(defender, attacker) and _is_in_attack_range(defender, attacker, distance):
+                a_hp -= defender.atk
+                d_attacks += 1
+                if verbose:
+                    print(f"  {defender.name} -> {attacker.name} "
+                          f"({defender.atk} 피해, {attacker.name} HP {max(a_hp, 0)})")
+            else:
+                if verbose:
+                    print(f"  {defender.name} 공격 불가 (사거리/타겟 조건 미충족)")
             next_d += d_interval
 
         if a_hp <= 0 or d_hp <= 0:
             break
+
     else:
         if verbose:
             print("[주의] 최대 스텝에 도달하여 전투를 강제 종료했습니다.")
 
-    # 승패 판정
+    # 5) 승패 판정
     if a_hp > 0 and d_hp <= 0:
         winner = "attacker"
-    elif d_hp >0 and a_hp <= 0:
+    elif d_hp > 0 and a_hp <= 0:
         winner = "defender"
     elif a_hp <= 0 and d_hp <= 0:
         winner = "draw"
     else:
         winner = "none"
 
-    return{
+    return {
         "winner": winner,
         "time": time,
         "attacker_final_hp": max(a_hp, 0),
