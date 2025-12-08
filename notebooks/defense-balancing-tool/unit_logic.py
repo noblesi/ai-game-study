@@ -656,7 +656,7 @@ def simulate_duel(attacker: Unit, defender: Unit,
     a_hp = attacker.hp
     d_hp = defender.hp
 
-    if attacker.attack_speed <= 0 and defender.attacker_speed <= 0:
+    if attacker.attack_speed <= 0 and defender.attack_speed <= 0:
         if verbose:
             print("양쪽 모두 공격 속도가 0이라 전투가 진행되지 않습니다.")
         return {
@@ -841,3 +841,170 @@ def battle_simulation_menu(units: List[Unit]) -> None:
     else:
         print("결과: 어느 쪽도 상대를 쓰러뜨리지 못했습니다.")
     print()
+
+    # 2D 위치 요약
+    ax0, ay0 = result["attacker_start_pos"]
+    dx0, dy0 = result["defender_start_pos"]
+    ax1, ay1 = result["attacker_final_pos"]
+    dx1, dy1 = result["defender_final_pos"]
+
+    final_dist = math.hypot(dx1 - ax1, dy1 - ay1)
+
+    print("\n[공간 요약]")
+    print(f"공격자: 시작 ({ax0:.2f}, {ay0:.2f}) -> 최종 ({ax1:.2f}, {ay1:.2f})")
+    print(f"방어자: 시작 ({dx0:.2f}, {dy0:.2f}) -> 최종 ({dx1:.2f}, {dy1:.2f})")
+    print(f"최종 거리: {final_dist:.2f}")
+    print()
+
+import math
+from typing import Tuple
+from unit_model import Unit
+
+def simulate_duel_2d(
+    attacker: Unit,
+    defender: Unit,
+    attacker_pos: Tuple[float, float] = (0.0, 0.0),
+    defender_pos: Tuple[float, float] = (5.0, 0.0),
+    dt: float = 0.05,       # 이동/거리 업데이트 간격
+    max_time: float = 60.0, # 최대 전투 시간
+    verbose: bool = True,
+) -> dict:
+    """
+    2D 좌표 기반 1:1 전투 시뮬레이션
+
+    - 공격자 / 방어자의 위치를 (x, y)로 관리
+    - 각 틱마다 서로를 향해 이동 (move_speed 사용)
+    - 공격 속도(attack_speed)에 따라 공격 타이밍 계산
+    - 사거리 판정은 거리(distance)에 대해 _is_in_attack_range() 사용
+    """
+
+    ax, ay = attacker_pos
+    dx, dy = defender_pos
+
+    a_hp = float(attacker.hp)
+    d_hp = float(defender.hp)
+
+    # 양쪽 다 공격 속도가 0이면 전투 불가
+    if attacker.attack_speed <= 0 and defender.attack_speed <= 0:
+        if verbose:
+            print("양쪽 모두 공격 속도가 0이라 전투가 진행되지 않습니다.")
+        return {
+            "winner": "none",
+            "time": 0.0,
+            "attacker_final_hp": a_hp,
+            "defender_final_hp": d_hp,
+            "attacker_attacks": 0,
+            "defender_attacks": 0,
+            "attacker_start_pos": attacker_pos,
+            "defender_start_pos": defender_pos,
+            "attacker_final_pos": attacker_pos,
+            "defender_final_pos": defender_pos,
+        }
+
+    # 다음 공격 시각 (이벤트 타임)
+    a_interval = math.inf if attacker.attack_speed <= 0 else 1.0 / attacker.attack_speed
+    d_interval = math.inf if defender.attack_speed <= 0 else 1.0 / defender.attack_speed
+
+    a_next = a_interval if a_interval < math.inf else math.inf
+    d_next = d_interval if d_interval < math.inf else math.inf
+
+    time = 0.0
+    a_attacks = 0
+    d_attacks = 0
+    eps = 1e-9
+
+    # 시작 위치 기록
+    attacker_start_pos = (ax, ay)
+    defender_start_pos = (dx, dy)
+
+    while time < max_time and a_hp > 0 and d_hp > 0:
+        # 1) 다음 '움직임 틱'과 '공격 이벤트' 중 가장 가까운 시간까지 진행
+        t_tick = time + dt
+        next_event = min(t_tick, a_next, d_next)
+        move_dt = max(0.0, next_event - time)
+
+        # 2) 서로를 향해 이동
+        if attacker.move_speed > 0 or defender.move_speed > 0:
+            vec_x = dx - ax
+            vec_y = dy - ay
+            dist = math.hypot(vec_x, vec_y)
+            if dist > 0:
+                dir_x = vec_x / dist
+                dir_y = vec_y / dist
+            else:
+                dir_x = dir_y = 0.0
+
+            # 공격자는 상대 방향으로, 방어자는 반대 방향으로 이동
+            ax += attacker.move_speed * dir_x * move_dt
+            ay += attacker.move_speed * dir_y * move_dt
+
+            dx -= defender.move_speed * dir_x * move_dt
+            dy -= defender.move_speed * dir_y * move_dt
+
+        time = next_event
+
+        # 3) 현재 거리 계산
+        distance = math.hypot(dx - ax, dy - ay)
+
+        if verbose:
+            print(
+                f"\n[시간 {time:.2f}s] "
+                f"거리:{distance:.2f}, "
+                f"{attacker.name} HP:{a_hp:.1f}, "
+                f"{defender.name} HP:{d_hp:.1f}"
+            )
+
+        # 4) 공격자 공격 처리
+        if time + eps >= a_next:
+            if _can_attack_target(attacker, defender) and _is_in_attack_range(attacker, defender, distance):
+                d_hp -= attacker.atk
+                a_attacks += 1
+                if verbose:
+                    print(
+                        f"  {attacker.name} -> {defender.name} "
+                        f"({attacker.atk} 피해, {defender.name} HP {max(d_hp, 0):.1f})"
+                    )
+            elif verbose:
+                print(f"  {attacker.name} 공격 불가 (사거리/타겟 조건 미충족)")
+            a_next += a_interval
+
+        # 5) 방어자 공격 처리
+        if d_hp > 0 and time + eps >= d_next:
+            if _can_attack_target(defender, attacker) and _is_in_attack_range(defender, attacker, distance):
+                a_hp -= defender.atk
+                d_attacks += 1
+                if verbose:
+                    print(
+                        f"  {defender.name} -> {attacker.name} "
+                        f"({defender.atk} 피해, {attacker.name} HP {max(a_hp, 0):.1f})"
+                    )
+            elif verbose:
+                print(f"  {defender.name} 공격 불가 (사거리/타겟 조건 미충족)")
+            d_next += d_interval
+
+        # 6) 사망 체크
+        if a_hp <= 0 or d_hp <= 0:
+            break
+
+    # 7) 승패 판정
+    if a_hp > 0 and d_hp <= 0:
+        winner = "attacker"
+    elif d_hp > 0 and a_hp <= 0:
+        winner = "defender"
+    elif a_hp <= 0 and d_hp <= 0:
+        winner = "draw"
+    else:
+        winner = "none"
+
+    return {
+        "winner": winner,
+        "time": time,
+        "attacker_final_hp": max(a_hp, 0),
+        "defender_final_hp": max(d_hp, 0),
+        "attacker_attacks": a_attacks,
+        "defender_attacks": d_attacks,
+        "attacker_start_pos": attacker_start_pos,
+        "defender_start_pos": defender_start_pos,
+        "attacker_final_pos": (ax, ay),
+        "defender_final_pos": (dx, dy),
+    }
