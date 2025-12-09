@@ -10,6 +10,7 @@ from unit_logic import (
     advanced_search_menu,
     bulk_level_up_menu,
     battle_simulation_menu,
+    auto_battle_experiment_menu
 )
 
 def main_loop():
@@ -26,6 +27,7 @@ def main_loop():
         print("8) 고급 검색/필터")
         print("9) 여러 유닛 일괄 레벨 올리기")
         print("10) 전투 시뮬레이션 (1 대 1)")
+        print("11) 자동 전투 실험 (AI 시뮬레이션)")
         print("0) 종료")
 
         choice = input("번호를 선택하세요: ").strip()
@@ -50,6 +52,8 @@ def main_loop():
             bulk_level_up_menu(units)
         elif choice == "10":
             battle_simulation_menu(units)
+        elif choice == "11":
+            auto_battle_experiment_menu(units)
         elif choice == "0":
             print("프로그램을 종료합니다.")
             save_units_to_file(units)

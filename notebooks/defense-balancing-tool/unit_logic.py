@@ -1,3 +1,4 @@
+import math
 from typing import List, Optional, Tuple
 from unit_model import Unit
 from utils import input_int, input_non_empty, select_from_list, confirm_yes_no
@@ -819,46 +820,132 @@ def battle_simulation_menu(units: List[Unit]) -> None:
 
     verbose = confirm_yes_no("전투 로그를 턴마다 출력할까요? (y/n): ")
 
-    # 4) 전투 실행
+    # 4) 전투 실행 (2D 시뮬레이션 사용)
     print("\n=== 전투 시작 ===")
-    result = simulate_duel(attacker, defender, verbose=verbose)
+    result = simulate_duel_2d(attacker, defender, verbose=verbose)
 
-    # 5) 결과 요약 출력
-    print("\n=== 전투 결과 요약 ===")
-    print(f"총 경과 시간      : {result['time']:.2f}초")
-    print(f"공격자 공격 횟수  : {result['attacker_attacks']}")
-    print(f"방어자 공격 횟수  : {result['defender_attacks']}")
-    print(f"공격자 최종 HP    : {result['attacker_final_hp']}")
-    print(f"방어자 최종 HP    : {result['defender_final_hp']}")
+    # 5) 결과 요약 출력 (공통 함수 호출)
+    print_battle_summary(attacker, defender, result)
 
-    winner = result["winner"]
-    if winner == "attacker":
-        print(f"승자: 공격자 {attacker.name}")
-    elif winner == "defender":
-        print(f"승자: 방어자 {defender.name}")
-    elif winner == "draw":
-        print("결과: 동시 사망 (무승부)")
-    else:
-        print("결과: 어느 쪽도 상대를 쓰러뜨리지 못했습니다.")
+def auto_battle_experiment_menu(units: List[Unit]) -> None:
+    """같은 두 유닛 조합을 여러 번 자동 전투 시켜 통계를 내는 메뉴."""
+    if not units:
+        print("\n[알림] 등록된 유닛이 없습니다. 먼저 유닛을 추가하세요.\n")
+        return
+
+    print("\n[자동 전투 실험 - AI 시뮬레이션]")
+    print("선택한 두 유닛을 여러 번 자동으로 싸우게 하여")
+    print("승률, 평균 전투 시간, 평균 남은 HP 등을 확인합니다.\n")
+
+    # 1) 공격자 선택
+    print("[공격자 선택]")
+    attacker_index = search_unit_menu_for_select(units)
+    if attacker_index is None:
+        print("자동 전투 실험을 취소합니다.\n")
+        return
+
+    # 2) 방어자 선택
+    print("[방어자 선택]")
+    defender_index = search_unit_menu_for_select(units)
+    if defender_index is None:
+        print("자동 전투 실험을 취소합니다.\n")
+        return
+
+    attacker = units[attacker_index]
+    defender = units[defender_index]
+
+    # 3) 선택 결과 출력
+    print("\n=== 선택된 유닛 ===")
+    print("[공격자]")
+    print_unit_detail(attacker)
+    print("[방어자]")
+    print_unit_detail(defender)
+
+    if not confirm_yes_no("이 구성으로 자동 전투 실험을 진행할까요? (y/n): "):
+        print("자동 전투 실험을 취소했습니다.\n")
+        return
+
+    # 4) 실험 횟수 입력
+    while True:
+        trials = input_int("시뮬레이션 횟수를 입력하세요 (1 이상, 예: 100): ")
+        if trials <= 0:
+            print("1 이상의 정수를 입력해주세요.")
+            continue
+        break
+
+    # 상세 로그는 반복 횟수가 적을 때만 물어본다
+    verbose_each = False
+    if trials <= 5:
+        verbose_each = confirm_yes_no(
+            "각 전투의 상세 로그도 출력할까요? (횟수가 많으면 n 추천) (y/n): "
+        )
+
+    # 5) 누적 통계용 변수들
+    total_time = 0.0
+    total_attacker_hp = 0.0
+    total_defender_hp = 0.0
+    total_attacker_attacks = 0
+    total_defender_attacks = 0
+
+    wins_attacker = 0
+    wins_defender = 0
+    draws = 0
+    no_result = 0
+
+    first_result: dict | None = None
+
+    # 6) 반복 전투 실행
+    for i in range(1, trials + 1):
+        if trials > 1:
+            print(f"\n--- [{i}/{trials}] 번째 전투 ---")
+
+        result = simulate_duel_2d(attacker, defender, verbose=verbose_each)
+
+        if first_result is None:
+            first_result = result
+
+        total_time += result["time"]
+        total_attacker_hp += result["attacker_final_hp"]
+        total_defender_hp += result["defender_final_hp"]
+        total_attacker_attacks += result["attacker_attacks"]
+        total_defender_attacks += result["defender_attacks"]
+
+        winner = result.get("winner", "none")
+        if winner == "attacker":
+            wins_attacker += 1
+        elif winner == "defender":
+            wins_defender += 1
+        elif winner == "draw":
+            draws += 1
+        else:
+            no_result += 1
+
+    # 7) 첫 번째 전투 예시 요약 (로그 안 찍었을 때만)
+    if first_result is not None and not verbose_each:
+        print("\n=== 첫 번째 전투 결과 예시 ===")
+        print_battle_summary(attacker, defender, first_result)
+
+    # 8) 통계 요약 출력
+    print("\n=== 자동 전투 실험 요약 ===")
+    print(f"실험 횟수: {trials}회")
+
+    if trials > 0:
+        print(f"공격자 승리 : {wins_attacker}회 ({wins_attacker / trials * 100:.1f}%)")
+        print(f"방어자 승리 : {wins_defender}회 ({wins_defender / trials * 100:.1f}%)")
+        if draws > 0:
+            print(f"무승부      : {draws}회 ({draws / trials * 100:.1f}%)")
+        if no_result > 0:
+            print(f"승패 미결정 : {no_result}회 ({no_result / trials * 100:.1f}%)")
+
+        print()
+        print(f"평균 전투 시간        : {total_time / trials:.2f}초")
+        print(f"공격자 평균 남은 HP   : {total_attacker_hp / trials:.1f}")
+        print(f"방어자 평균 남은 HP   : {total_defender_hp / trials:.1f}")
+        print(f"공격자 평균 공격 횟수 : {total_attacker_attacks / trials:.1f}")
+        print(f"방어자 평균 공격 횟수 : {total_defender_attacks / trials:.1f}")
+
     print()
 
-    # 2D 위치 요약
-    ax0, ay0 = result["attacker_start_pos"]
-    dx0, dy0 = result["defender_start_pos"]
-    ax1, ay1 = result["attacker_final_pos"]
-    dx1, dy1 = result["defender_final_pos"]
-
-    final_dist = math.hypot(dx1 - ax1, dy1 - ay1)
-
-    print("\n[공간 요약]")
-    print(f"공격자: 시작 ({ax0:.2f}, {ay0:.2f}) -> 최종 ({ax1:.2f}, {ay1:.2f})")
-    print(f"방어자: 시작 ({dx0:.2f}, {dy0:.2f}) -> 최종 ({dx1:.2f}, {dy1:.2f})")
-    print(f"최종 거리: {final_dist:.2f}")
-    print()
-
-import math
-from typing import Tuple
-from unit_model import Unit
 
 def simulate_duel_2d(
     attacker: Unit,
@@ -1008,3 +1095,48 @@ def simulate_duel_2d(
         "attacker_final_pos": (ax, ay),
         "defender_final_pos": (dx, dy),
     }
+
+def print_battle_summary(attacker: Unit, defender: Unit, result: dict) -> None:
+    """전투 시뮬레이션 결과를 한 곳에서 출력하는 함수 (1D/2D 공통)."""
+
+    # === 공통 요약 출력 ===
+    print("\n=== 전투 결과 요약 ===")
+    print(f"총 경과 시간      : {result['time']:.2f}초")
+    print(f"공격자 공격 횟수  : {result['attacker_attacks']}")
+    print(f"방어자 공격 횟수  : {result['defender_attacks']}")
+    print(f"공격자 최종 HP    : {result['attacker_final_hp']}")
+    print(f"방어자 최종 HP    : {result['defender_final_hp']}")
+
+    winner = result.get("winner", "none")
+    if winner == "attacker":
+        print(f"승자: 공격자 {attacker.name}")
+    elif winner == "defender":
+        print(f"승자: 방어자 {defender.name}")
+        print()
+    elif winner == "draw":
+        print("결과: 동시 사망 (무승부)")
+    else:
+        print("결과: 어느 쪽도 상대를 쓰러뜨리지 못했습니다.")
+    print()
+
+    # === 2D 정보가 있으면 공간 요약도 출력 ===
+    # simulate_duel(1D) 결과에는 좌표 정보가 없고,
+    # simulate_duel_2d 결과에만 좌표가 있으니까, 키 존재 여부로 체크
+    if (
+        "attacker_start_pos" in result
+        and "attacker_final_pos" in result
+        and "defender_start_pos" in result
+        and "defender_final_pos" in result
+    ):
+        ax0, ay0 = result["attacker_start_pos"]
+        dx0, dy0 = result["defender_start_pos"]
+        ax1, ay1 = result["attacker_final_pos"]
+        dx1, dy1 = result["defender_final_pos"]
+
+        final_dist = math.hypot(dx1 - ax1, dy1 - ay1)
+
+        print("\n[공간 요약]")
+        print(f"공격자: 시작 ({ax0:.2f}, {ay0:.2f}) -> 최종 ({ax1:.2f}, {ay1:.2f})")
+        print(f"방어자: 시작 ({dx0:.2f}, {dy0:.2f}) -> 최종 ({dx1:.2f}, {dy1:.2f})")
+        print(f"최종 거리: {final_dist:.2f}")
+        print()
