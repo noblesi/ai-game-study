@@ -1,3 +1,14 @@
+"""유닛 관리/검색/통계와 1D/2D 전투 시뮬레이션, 자동 전투 실험 메뉴를 담당하는 모듈.
+
+이 모듈의 전투 시뮬레이션 함수들은 결과를 모두 같은 dict 포맷으로 반환한다.
+(예: winner, time, attacker_final_hp, defender_final_hp, attacker_attacks, defender_attacks …)
+
+이렇게 맞춰 두면 나중에 AI/밸런싱 실험에서
+- 여러 전투 결과를 로그처럼 모아서 학습 데이터로 쓰거나,
+- 유닛 밸런스 비교를 자동으로 돌릴 때
+결과 처리를 공통 로직으로 만들기 쉽다.
+"""
+
 import math
 from typing import List, Optional, Tuple
 from unit_model import Unit
@@ -646,12 +657,23 @@ def simulate_duel(attacker: Unit, defender: Unit,
                   initial_distance: float = 5.0,
                   verbose: bool = True) -> dict:
     """
-    사거리/이동속도/타겟타입/공격타입을 고려한 1:1 전투 시뮬레이션
+    사거리/이동속도/타겟타입/공격타입을 고려한 1차원(1D) 1:1 전투 시뮬레이션.
 
     - 1차원 레인 위에 두 유닛을 두고,
       시간에 따라 거리 = initial_distance - (move_speed 합) * t 로 줄어듦
     - 공격 속도 → 1 / attack_speed 간격으로 공격 이벤트 발생
-    - 근접/원거리/마법, ground/air/both 타겟 타입 등을 사용
+    - 근접/원거리/마법, ground/air/both 타겟 타입 조건을 사용해
+      실제로 공격이 가능한지 판정
+    - 이동은 “거리 감소”로만 처리하는 단순 모델(좌표계 X)
+
+    반환값은 전투 로그를 요약한 dict이며, 항상 다음 키를 가진다.
+
+    - winner: "attacker" | "defender" | "draw" | "none"
+    - time: 전투가 종료될 때까지 걸린 시간(초)
+    - attacker_final_hp / defender_final_hp: 전투 종료 시 HP
+    - attacker_attacks / defender_attacks: 각 유닛의 총 공격 횟수
+
+    이 포맷은 simulate_duel_2d 및 자동 전투 실험에서 공통으로 사용된다.
     """
 
     a_hp = attacker.hp
@@ -827,8 +849,96 @@ def battle_simulation_menu(units: List[Unit]) -> None:
     # 5) 결과 요약 출력 (공통 함수 호출)
     print_battle_summary(attacker, defender, result)
 
+def build_experiment_summary(
+        attacker: Unit,
+        defender: Unit,
+        trials: int,
+        total_time: float,
+        total_attacker_hp: float,
+        total_defender_hp: float,
+        total_attacker_attacks: int,
+        total_defender_attacks: int,
+        wins_attacker: int,
+        wins_defender: int,
+        draws: int,
+        no_result: int,
+) -> dict:
+    """
+    자동 전투 실험 결과를 하나의 dict로 요약하는 유틸 함수.
+
+    - 나중에 JSON/CSV로 저장하거나
+    - AI 학습/분석용 데이터로 사용할 때
+      한 번의 실험 단위를 그대로 기록할 수 있게 해준다.
+    """
+
+    summary = {
+        "attacker_name": attacker.name,
+        "defender_name": defender.name,
+        "attacker_level": attacker.level,
+        "defender_level": defender.level,
+        "trials": trials,
+        "wins_attacker": wins_attacker,
+        "wins_defender": wins_defender,
+        "draws": draws,
+        "no_result": no_result,
+        # 유닛의 현재 스탯 전체(입력 특징)를 그대로 포함
+        "attacker_unit": attacker.to_dict(),
+        "defender_unit": defender.to_dict(),
+    }
+
+    if trials > 0:
+        summary.update(
+            {
+                "attacker_win_rate": wins_attacker / trials,
+                "defender_win_rate": wins_defender / trials,
+                "draw_rate": draws / trials,
+                "no_result_rate": no_result / trials,
+                "avg_time": total_time / trials,
+                "avg_attacker_final_hp": total_attacker_hp / trials,
+                "avg_defender_final_hp": total_defender_hp / trials,
+                "avg_attacker_attacks": total_attacker_attacks / trials,
+                "avg_defender_attacks": total_defender_attacks / trials,
+            }
+        )
+    else:
+        # 이론상 0회 실험은 없겠지만, 방어적으로 0으로 채워둔다.
+        summary.update(
+            {
+                "attacker_win_rate": 0.0,
+                "defender_win_rate": 0.0,
+                "draw_rate": 0.0,
+                "no_result_rate": 0.0,
+                "avg_time": 0.0,
+                "avg_attacker_final_hp": 0.0,
+                "avg_defender_final_hp": 0.0,
+                "avg_attacker_attacks": 0.0,
+                "avg_defender_attacks": 0.0,
+            }
+        )
+
+    return summary
+
+
 def auto_battle_experiment_menu(units: List[Unit]) -> None:
-    """같은 두 유닛 조합을 여러 번 자동 전투 시켜 통계를 내는 메뉴."""
+    """
+    같은 두 유닛 조합을 여러 번 자동 전투 시켜 통계를 내는 메뉴.
+
+    - 내부적으로 simulate_duel_2d()를 여러 번 호출한다.
+    - 매 실험마다 반환된 dict에서 필요한 값들을 누적한 뒤,
+      아래와 같은 통계를 계산해 출력한다.
+
+      * 공격자/방어자 승리 횟수 및 비율(승률)
+      * 동시 사망(draw) 횟수
+      * 어떤 쪽도 쓰러지지 않은(no_result) 횟수
+      * 평균 전투 시간
+      * 공격자/방어자 평균 남은 HP
+      * 공격자/방어자 평균 공격 횟수
+
+    이 구조는 나중에 AI/밸런싱 실험에서
+    - 특정 유닛 조합의 승률을 자동으로 측정하거나,
+    - 유닛 파라미터를 바꿔가며 실험 로그를 축적할 때
+    그대로 재사용할 수 있도록 설계되어 있다.
+    """
     if not units:
         print("\n[알림] 등록된 유닛이 없습니다. 먼저 유닛을 추가하세요.\n")
         return
@@ -881,6 +991,7 @@ def auto_battle_experiment_menu(units: List[Unit]) -> None:
         )
 
     # 5) 누적 통계용 변수들
+    #    (실험 로그나 AI 분석에 바로 사용할 수 있는 형태로 모아두는 값들)
     total_time = 0.0
     total_attacker_hp = 0.0
     total_defender_hp = 0.0
@@ -946,6 +1057,27 @@ def auto_battle_experiment_menu(units: List[Unit]) -> None:
 
     print()
 
+    # 9) 실험 결과를 딕셔너리로 정리 (AI/로그 확장용)
+    summary = build_experiment_summary(
+        attacker=attacker,
+        defender=defender,
+        trials=trials,
+        total_time=total_time,
+        total_attacker_hp=total_attacker_hp,
+        total_defender_hp=total_defender_hp,
+        total_attacker_attacks=total_attacker_attacks,
+        total_defender_attacks=total_defender_attacks,
+        wins_attacker=wins_attacker,
+        wins_defender=wins_defender,
+        draws=draws,
+        no_result=no_result,
+    )
+
+    # 지금은 단순히 콘솔에 dict 형태로만 보여준다.
+    print("[실험 요약 dict]")
+    print(summary)
+    print()
+
 
 def simulate_duel_2d(
     attacker: Unit,
@@ -957,12 +1089,29 @@ def simulate_duel_2d(
     verbose: bool = True,
 ) -> dict:
     """
-    2D 좌표 기반 1:1 전투 시뮬레이션
+    2D 좌표 기반 1:1 전투 시뮬레이션.
 
     - 공격자 / 방어자의 위치를 (x, y)로 관리
     - 각 틱마다 서로를 향해 이동 (move_speed 사용)
     - 공격 속도(attack_speed)에 따라 공격 타이밍 계산
     - 사거리 판정은 거리(distance)에 대해 _is_in_attack_range() 사용
+
+    반환값은 1D 버전(simulate_duel)과 호환되는 dict 포맷을 기본으로 하며,
+    다음 정보를 포함한다.
+
+    [공통 키]
+    - winner: "attacker" | "defender" | "draw" | "none"
+    - time: 전투가 종료될 때까지 걸린 시간(초)
+    - attacker_final_hp / defender_final_hp
+    - attacker_attacks / defender_attacks
+
+    [2D 전용 추가 키]
+    - attacker_start_pos / defender_start_pos: 전투 시작 좌표 (x, y)
+    - attacker_final_pos / defender_final_pos: 전투 종료 좌표 (x, y)
+
+    따라서 print_battle_summary나 자동 실험 메뉴에서
+    1D/2D 결과를 같은 방식으로 다루고,
+    필요한 경우에만 2D 좌표 정보를 추가로 사용할 수 있다.
     """
 
     ax, ay = attacker_pos

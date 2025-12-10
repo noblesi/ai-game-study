@@ -1,3 +1,10 @@
+"""유닛 관리 + 전투 시뮬레이션 콘솔 툴의 진입점 모듈.
+
+- JSON 파일에서 유닛 목록을 로드하고,
+- 콘솔 메뉴를 통해 유닛 관리/검색/통계/전투 시뮬레이션/자동 전투 실험을 실행한다.
+- 실제 전투 로직과 실험 로직은 unit_logic.py 에 정의되어 있다.
+"""
+
 from unit_io import load_units_from_file, save_units_to_file
 from unit_logic import (
     print_units, 
@@ -14,6 +21,7 @@ from unit_logic import (
 )
 
 def main_loop():
+    """콘솔 메뉴 루프를 돌면서 유닛 관리/전투 시뮬레이션 관련 기능을 호출한다."""
     units = load_units_from_file()
     while True:
         print("=== 유닛 관리 메뉴 ===")
