@@ -1289,3 +1289,237 @@ def print_battle_summary(attacker: Unit, defender: Unit, result: dict) -> None:
         print(f"방어자: 시작 ({dx0:.2f}, {dy0:.2f}) -> 최종 ({dx1:.2f}, {dy1:.2f})")
         print(f"최종 거리: {final_dist:.2f}")
         print()
+
+# ============================
+# 전투 시나리오 프리셋 (테스트/밸런싱용)
+# ============================
+
+def _normalize_name(s: str) -> str:
+    return "".join(ch for ch in s.lower() if ch.isalnum())
+
+def _find_unit_by_name_fuzzy(units: List[Unit], name: str) -> Optional[Unit]:
+    """이름이 살짝 달라도(공백/대소문자) 최대한 찾아준다."""
+    key = _normalize_name(name)
+    for u in units:
+        if _normalize_name(u.name) == key:
+            return u
+    return None
+
+def _make_unit_from_spec(spec: dict) -> Unit:
+    """시나리오 스펙(dict)으로 Unit 임시 생성."""
+    return Unit(
+        name=spec.get("name", "Temp"),
+        level=spec.get("level", 1),
+        hp=spec.get("hp", 100),
+        atk=spec.get("atk", 10),
+        cost=spec.get("cost", 0),
+        role=spec.get("role", "ground"),
+        range=spec.get("range", 1),
+        attack_speed=spec.get("attack_speed", 1.0),
+        move_speed=spec.get("move_speed", 0.0),
+        target_type=spec.get("target_type", "ground"),
+        attack_type=spec.get("attack_type", "melee"),
+        hp_per_level=spec.get("hp_per_level", 0),
+        atk_per_level=spec.get("atk_per_level", 0),
+    )
+
+def _run_duel_trials_2d(
+    attacker: Unit,
+    defender: Unit,
+    trials: int,
+    attacker_pos: Tuple[float, float],
+    defender_pos: Tuple[float, float],
+    verbose_each: bool = False,
+) -> dict:
+    """2D 1:1 전투를 여러 번 돌린 뒤 build_experiment_summary 형태로 요약 dict 반환."""
+    results: List[dict] = []
+    for i in range(trials):
+        result = simulate_duel_2d(
+            attacker=attacker,
+            defender=defender,
+            attacker_pos=attacker_pos,
+            defender_pos=defender_pos,
+            verbose=verbose_each,
+        )
+        results.append(result)
+
+    summary = build_experiment_summary(results)
+
+    # 시나리오 파라미터도 같이 기록
+    summary["attacker_name"] = attacker.name
+    summary["defender_name"] = defender.name
+    summary["trials"] = trials
+    summary["attacker_pos"] = attacker_pos
+    summary["defender_pos"] = defender_pos
+
+    return summary
+
+def battle_scenarios_menu(units: List[Unit]) -> None:
+    """battle_scenarios_*.md에 맞춘 '프리셋 시나리오' 실행 메뉴.
+
+    - 기본은 '시나리오 스펙대로 임시 유닛 생성'해서 실행
+    - 필요하면 현재 units.json에 저장된 유닛으로도 실행 가능(이름 퍼지 매칭)
+    """
+
+    # 현재 버전 기준: _can_attack_target()이 role에서 kind(ground/air/tower)를 유추하므로,
+    # 시나리오 스펙도 그 규칙에 맞춰 role/target_type을 잡아준다.
+    scenarios = [
+        {
+            "title": "Knight vs Goblin (근접 기본 밸런스)",
+            "attacker_spec": {
+                "name": "Knight",
+                "level": 1,
+                "hp": 200,
+                "atk": 25,
+                "role": "tower",
+                "range": 1,
+                "attack_speed": 1.0,
+                "move_speed": 0.0,
+                "target_type": "ground",
+                "attack_type": "melee",
+            },
+            "defender_spec": {
+                "name": "Goblin",
+                "level": 1,
+                "hp": 80,
+                "atk": 15,
+                "role": "ground",
+                "range": 1,
+                "attack_speed": 1.0,
+                "move_speed": 1.5,
+                "target_type": "tower",
+                "attack_type": "melee",
+            },
+            "attacker_pos": (0.0, 0.0),
+            "defender_pos": (10.0, 0.0),
+            "trials": 100,
+        },
+        {
+            "title": "AntiAirTower vs Wyvern (공중 유닛 대응)",
+            "attacker_spec": {
+                "name": "AntiAirTower",
+                "level": 1,
+                "hp": 250,
+                "atk": 30,
+                "role": "tower",
+                "range": 6,
+                "attack_speed": 1.2,
+                "move_speed": 0.0,
+                "target_type": "air",
+                "attack_type": "ranged",
+            },
+            "defender_spec": {
+                "name": "Wyvern",
+                "level": 1,
+                "hp": 120,
+                "atk": 20,
+                "role": "air",
+                "range": 1,
+                "attack_speed": 1.0,
+                "move_speed": 2.0,
+                # 현재 버전의 기본 적 로직에 맞춰 '타워를 치는' 타겟으로 둔다.
+                "target_type": "tower",
+                "attack_type": "melee",
+            },
+            "attacker_pos": (0.0, 0.0),
+            "defender_pos": (12.0, 0.0),
+            "trials": 100,
+        },
+        {
+            "title": "Assassin vs Giant (공속/이동/근접 딜교)",
+            "attacker_spec": {
+                "name": "Assassin",
+                "level": 1,
+                "hp": 90,
+                "atk": 22,
+                "role": "ground",
+                "range": 1,
+                "attack_speed": 1.8,
+                "move_speed": 2.2,
+                "target_type": "ground",
+                "attack_type": "melee",
+            },
+            "defender_spec": {
+                "name": "Giant",
+                "level": 1,
+                "hp": 260,
+                "atk": 35,
+                "role": "ground",
+                "range": 1,
+                "attack_speed": 0.7,
+                "move_speed": 1.0,
+                "target_type": "ground",
+                "attack_type": "melee",
+            },
+            "attacker_pos": (0.0, 0.0),
+            "defender_pos": (8.0, 0.0),
+            "trials": 100,
+        },
+    ]
+
+    print("\n=== 전투 시나리오 프리셋 ===")
+    for i, s in enumerate(scenarios, start=1):
+        print(f"{i}) {s['title']}")
+    print("0) 취소")
+
+    sel = input("번호를 선택하세요: ").strip()
+    if sel == "0":
+        print("취소했습니다.\n")
+        return
+    try:
+        idx = int(sel) - 1
+        if idx < 0 or idx >= len(scenarios):
+            raise ValueError
+    except ValueError:
+        print("잘못된 번호입니다.\n")
+        return
+
+    scenario = scenarios[idx]
+
+    # 실행 모드: 저장된 유닛을 사용할지 / 시나리오 스펙대로 임시 생성할지
+    use_saved = confirm_yes_no("현재 저장된 유닛(units.json)으로 실행할까요? (y/n): ")
+
+    if use_saved:
+        a_name = scenario["attacker_spec"]["name"]
+        d_name = scenario["defender_spec"]["name"]
+
+        attacker = _find_unit_by_name_fuzzy(units, a_name)
+        defender = _find_unit_by_name_fuzzy(units, d_name)
+
+        if attacker is None or defender is None:
+            print("\n[주의] 저장된 유닛에서 이름을 찾지 못했습니다.")
+            print("      → 시나리오 스펙 기반 임시 유닛으로 실행합니다.\n")
+            attacker = _make_unit_from_spec(scenario["attacker_spec"])
+            defender = _make_unit_from_spec(scenario["defender_spec"])
+    else:
+        attacker = _make_unit_from_spec(scenario["attacker_spec"])
+        defender = _make_unit_from_spec(scenario["defender_spec"])
+
+    attacker_pos = scenario["attacker_pos"]
+    defender_pos = scenario["defender_pos"]
+    trials = scenario["trials"]
+
+    print(f"\n[선택된 시나리오] {scenario['title']}")
+    print(f"- trials: {trials}")
+    print(f"- attacker: {attacker.name} / role={attacker.role} / target={attacker.target_type}")
+    print(f"- defender: {defender.name} / role={defender.role} / target={defender.target_type}")
+    print(f"- pos: attacker={attacker_pos}, defender={defender_pos}")
+
+    verbose_each = False
+    if trials <= 10:
+        # trials가 작으면 매번 로그를 찍어도 괜찮은데, 그래도 선택권 제공
+        verbose_each = confirm_yes_no("각 전투 로그도 모두 출력할까요? (y/n): ")
+
+    print("\n=== 자동 전투 실험 시작 ===")
+    summary = _run_duel_trials_2d(
+        attacker=attacker,
+        defender=defender,
+        trials=trials,
+        attacker_pos=attacker_pos,
+        defender_pos=defender_pos,
+        verbose_each=verbose_each,
+    )
+
+    print("\n=== 시나리오 실험 요약(dict) ===")
+    print(summary)
+    print()
