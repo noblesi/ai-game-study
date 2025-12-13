@@ -1332,8 +1332,21 @@ def _run_duel_trials_2d(
     verbose_each: bool = False,
 ) -> dict:
     """2D 1:1 전투를 여러 번 돌린 뒤 build_experiment_summary 형태로 요약 dict 반환."""
-    results: List[dict] = []
-    for i in range(trials):
+    if trials <= 0:
+        raise ValueError("trials must be >= 1")
+
+    total_time = 0.0
+    total_attacker_hp = 0.0
+    total_defender_hp = 0.0
+    total_attacker_attacks = 0
+    total_defender_attacks = 0
+
+    wins_attacker = 0
+    wins_defender = 0
+    draws = 0
+    no_result = 0
+
+    for _ in range(trials):
         result = simulate_duel_2d(
             attacker=attacker,
             defender=defender,
@@ -1341,14 +1354,39 @@ def _run_duel_trials_2d(
             defender_pos=defender_pos,
             verbose=verbose_each,
         )
-        results.append(result)
 
-    summary = build_experiment_summary(results)
+        total_time += result.get("time", 0.0)
+        total_attacker_hp += result.get("attacker_final_hp", 0.0)
+        total_defender_hp += result.get("defender_final_hp", 0.0)
+        total_attacker_attacks += result.get("attacker_attacks", 0)
+        total_defender_attacks += result.get("defender_attacks", 0)
+
+        winner = result.get("winner", "none")
+        if winner == "attacker":
+            wins_attacker += 1
+        elif winner == "defender":
+            wins_defender += 1
+        elif winner == "draw":
+            draws += 1
+        else:
+            no_result += 1
+
+    summary = build_experiment_summary(
+        attacker=attacker,
+        defender=defender,
+        trials=trials,
+        total_time=total_time,
+        total_attacker_hp=total_attacker_hp,
+        total_defender_hp=total_defender_hp,
+        total_attacker_attacks=total_attacker_attacks,
+        total_defender_attacks=total_defender_attacks,
+        wins_attacker=wins_attacker,
+        wins_defender=wins_defender,
+        draws=draws,
+        no_result=no_result,
+    )
 
     # 시나리오 파라미터도 같이 기록
-    summary["attacker_name"] = attacker.name
-    summary["defender_name"] = defender.name
-    summary["trials"] = trials
     summary["attacker_pos"] = attacker_pos
     summary["defender_pos"] = defender_pos
 
