@@ -1,4 +1,7 @@
-"""유닛 관리/검색/통계와 1D/2D 전투 시뮬레이션, 자동 전투 실험 메뉴를 담당하는 모듈.
+"""유닛 관리/검색/통계와 1D/2D 전투 시뮬레이션, 자동 전투 실험 메뉴(UI)를 담당하는 모듈.
+
+- 전투 "계산 로직"은 battle_sim.py에 분리되어 있으며,
+  이 파일은 메뉴/입력/출력 흐름(UX)을 중심으로 유지한다.
 
 이 모듈의 전투 시뮬레이션 함수들은 결과를 모두 같은 dict 포맷으로 반환한다.
 (예: winner, time, attacker_final_hp, defender_final_hp, attacker_attacks, defender_attacks …)
@@ -13,6 +16,15 @@ import math
 from typing import List, Optional, Tuple
 from unit_model import Unit
 from utils import input_int, input_non_empty, select_from_list, confirm_yes_no
+from battle_sim import (
+    simulate_duel,
+    simulate_duel_2d,
+    print_battle_summary,
+    build_experiment_summary,
+    find_unit_by_name_fuzzy,
+    make_unit_from_spec,
+    run_duel_trials_2d,
+)
 
 # ============================
 # 공통 유틸 함수들
@@ -33,19 +45,21 @@ def _input_float(prompt: str, allow_negative: bool = False) -> float:
             continue
 
         if not allow_negative and value < 0:
-            print("음수는 입력할 수 없습니다.")
+            print("음수는 입력할 수 없습니다. 다시 입력해주세요.")
             continue
 
         return value
 
+
 def format_unit_brief(unit: Unit) -> str:
-    ##유닛 한 줄 표기 형식 공통화##
+    ##유닛 1줄 요약 포맷##
     return (
         f"{unit.name} "
         f"(Lv.{unit.level} / HP:{unit.hp} / ATK:{unit.atk} / "
         f"Role:{unit.role} / Type:{unit.attack_type} / "
         f"Cost:{unit.cost} / Range:{unit.range})"
     )
+
 
 def print_unit_detail(unit: Unit) -> None:
     ##유닛 상세 정보 출력##
@@ -57,123 +71,121 @@ def print_unit_detail(unit: Unit) -> None:
     print(f"ATK        : {unit.atk}")
     print(f"코스트      : {unit.cost}")
     print(f"사거리      : {unit.range}")
-    print(f"공격 타입   : {unit.attack_type}")
     print(f"공격 속도   : {unit.attack_speed}")
     print(f"이동 속도   : {unit.move_speed}")
     print(f"타겟 타입   : {unit.target_type}")
-    print(f"레벨당 HP   : {unit.hp_per_level}")
-    print(f"레벨당 ATK  : {unit.atk_per_level}\n")
+    print(f"공격 타입   : {unit.attack_type}\n")
 
-def search_units(units: List[Unit], keyword: str) -> List[Tuple[int, Unit]]:
-    ##이름에 keyword가 포함된 유닛을 (원본 인덱스, Unit) 튜플 목록으로 반환한다.##
-    result: List[Tuple[int, Unit]] = []
-    keyword = keyword.strip().lower()
-    if not keyword:
-        return result
-
-    for i, unit in enumerate(units):
-        if keyword in unit.name.lower():
-            result.append((i, unit))
-
-    return result
-
-def render_search_item(item: Tuple[int, Unit], display_idx: int) -> None:
-    ##검색 결과 한 줄 출력 전용 함수 (select_from_list와도 함께 사용)##
-    _idx, unit = item
-    print(f"{display_idx}. {format_unit_brief(unit)}")
-
-def print_search_results(results: List[Tuple[int, Unit]], keyword: str) -> None:
-    ##검색결과 목록 전체를 출력하는 함수##
-    print(f"\n=== '{keyword}' 검색 결과 ({len(results)}개) ===")
-    for display_idx, item in enumerate(results, start=1):
-        render_search_item(item, display_idx)
-    print()
-
-def print_indexed_results(results: List[Tuple[int, Unit]], description: str) -> None:
-    ##(원본인덱스, Unit) 리스트를 출력하는 공통함수##
-    if not results:
-        print(f"\n[알림] 조건에 맞는 유닛이 없습니다. ({description})\n")
-        return
-    
-    print(f"\n=== {description} ({len(results)}개) ===")
-    for display_idx, (_, unit) in enumerate(results, start=1):
-        render_search_item((0, unit), display_idx)
-    print()
-
-def print_units_stats(units: List[Unit]) -> None:
-    ##유닛들의 기본통계를 출력하는 함수##
-    if not units:
-        print("\n등록된 유닛이 없습니다. 통계를 표시할 수 없습니다.\n")
-        return
-    
-    count = len(units)
-    total_level = sum(u.level for u in units)
-    total_hp = sum(u.hp for u in units)
-    total_atk = sum(u.atk for u in units)
-    total_dps = sum(u.atk * u.attack_speed for u in units)  
-
-    avg_level = total_level / count
-    avg_hp = total_hp / count
-    avg_atk = total_atk / count
-    avg_dps = total_dps / count  
-
-    highest_level_unit = max(units, key=lambda u: u.level)
-    highest_atk_unit = max(units, key=lambda u: u.atk)
-    highest_dps_unit = max(units, key=lambda u: u.atk * u.attack_speed) 
-
-    print("\n=== 유닛 통계 ===")
-    print(f"총 유닛 수: {count}")
-    print(f"평균 레벨: {avg_level:.1f}")
-    print(f"평균 HP   : {avg_hp:.1f}")
-    print(f"평균 ATK  : {avg_atk:.1f}")
-    print(f"평균 DPS  : {avg_dps:.1f}")
-    print()
-    print(f"최고 레벨 유닛: {format_unit_brief(highest_level_unit)}")
-    print(f"최고 ATK 유닛 : {format_unit_brief(highest_atk_unit)}")
-    print(f"최고 DPS 유닛 : {format_unit_brief(highest_dps_unit)}")
-    print()
 
 # ============================
-# 메뉴 함수들
+# 유닛 목록/검색/선택
 # ============================
 
 def print_units(units: List[Unit]) -> None:
-    ##등록된 유닛 목록을 출력한다##
+    ##유닛 목록 출력##
     if not units:
         print("\n등록된 유닛이 없습니다.\n")
         return
-    
+
     print("\n=== 유닛 목록 ===")
-    for i, unit in enumerate(units, start = 1):
+    for i, unit in enumerate(units, start=1):
         print(f"{i}. {format_unit_brief(unit)}")
     print()
 
+
+def search_units(units: List[Unit], keyword: str) -> List[Tuple[int, Unit]]:
+    ##키워드로 유닛 검색 (원본 index, Unit) 반환##
+    keyword = (keyword or "").strip().lower()
+    if not keyword:
+        return []
+
+    results: List[Tuple[int, Unit]] = []
+    for idx, unit in enumerate(units):
+        if keyword in unit.name.lower():
+            results.append((idx, unit))
+    return results
+
+
+def search_unit_menu(units: List[Unit]) -> None:
+    ##검색만 수행하고 결과를 출력하는 메뉴##
+    if not units:
+        print("\n[알림] 등록된 유닛이 없습니다.\n")
+        return
+
+    keyword = input_non_empty("검색할 키워드를 입력하세요: ")
+    results = search_units(units, keyword)
+
+    if not results:
+        print("\n검색 결과가 없습니다.\n")
+        return
+
+    print("\n=== 검색 결과 ===")
+    for i, (_, unit) in enumerate(results, start=1):
+        print(f"{i}. {format_unit_brief(unit)}")
+    print()
+
+
+def search_unit_menu_for_select(units: List[Unit]) -> Optional[int]:
+    ##검색 → 결과 목록 → 번호 선택 → 원본 units 인덱스 반환##
+    if not units:
+        print("\n[알림] 등록된 유닛이 없습니다.\n")
+        return None
+
+    keyword = input_non_empty("검색할 키워드를 입력하세요: ")
+    results = search_units(units, keyword)
+
+    if not results:
+        print("\n검색 결과가 없습니다.\n")
+        return None
+
+    print("\n=== 검색 결과 ===")
+    for i, (_, unit) in enumerate(results, start=1):
+        print(f"{i}. {format_unit_brief(unit)}")
+    print("0. 취소")
+
+    while True:
+        sel = input("번호를 선택하세요: ").strip()
+        try:
+            num = int(sel)
+        except ValueError:
+            print("숫자를 입력해주세요.")
+            continue
+
+        if num == 0:
+            return None
+        if 1 <= num <= len(results):
+            original_index = results[num - 1][0]
+            return original_index
+
+        print("범위를 벗어났습니다. 다시 입력해주세요.")
+
+
+# ============================
+# 유닛 추가/수정/삭제/레벨업
+# ============================
+
 def add_unit_menu(units: List[Unit]) -> None:
+    ##유닛 추가 메뉴##
     print("\n[유닛 추가하기]")
 
     name = input_non_empty("유닛 이름을 입력하세요: ")
 
-    level = input_int("레벨을 입력하세요(0 이상의 정수): ")
-    hp = input_int("HP를 입력하세요(0 이상의 정수): ")
-    atk = input_int("ATK를 입력하세요(0 이상의 정수): ")
+    # 중복 이름 체크(선택)
+    if any(u.name.lower() == name.lower() for u in units):
+        if not confirm_yes_no("같은 이름의 유닛이 이미 있습니다. 그래도 추가할까요? (y/n): "):
+            print("유닛 추가를 취소합니다.\n")
+            return
 
-    role_raw = input(
-        "역할을 입력하세요 (tower/enemy/hero, 기본값: tower): "
-    ).strip()
-    role = role_raw or "tower"
-
-    range_ = input_int("사거리를 입력하세요(0 이상의 정수): ", allow_negative=False)
-    cost = input_int("코스트를 입력하세요(0 이상의 정수): ", allow_negative=False)
-
-    target_raw = input(
-        "타겟 타입을 입력하세요 (ground/air/both, 기본값: ground): "
-    ).strip()
-    target_type = target_raw or "ground"
-
-    attack_raw = input(
-        "공격 타입을 입력하세요 (melee/ranged/magic, 기본값: melee): "
-    ).strip()
-    attack_type = attack_raw or "melee"
+    role = input("역할(Role)을 입력하세요(예: defender/ground_enemy/air_enemy/tower): ").strip() or "ground"
+    level = input_int("레벨을 입력하세요(정수): ")
+    hp = input_int("HP를 입력하세요(정수): ")
+    atk = input_int("ATK를 입력하세요(정수): ")
+    cost = input_int("코스트를 입력하세요(정수): ")
+    rng = input_int("사거리(range)를 입력하세요(정수): ")
+    attack_speed = _input_float("공격 속도(초당 공격 횟수)를 입력하세요(예: 1.0): ")
+    move_speed = _input_float("이동 속도(초당 이동 거리)를 입력하세요(예: 1.0): ", allow_negative=False)
+    target_type = input("타겟 타입(target_type: ground/air/tower/both): ").strip() or "both"
+    attack_type = input("공격 타입(attack_type: melee/ranged/magic...): ").strip() or "melee"
 
     unit = Unit(
         name=name,
@@ -181,626 +193,185 @@ def add_unit_menu(units: List[Unit]) -> None:
         hp=hp,
         atk=atk,
         role=role,
-        range=range_,
         cost=cost,
+        range=rng,
+        attack_speed=attack_speed,
+        move_speed=move_speed,
         target_type=target_type,
-        attack_type=attack_type,   
+        attack_type=attack_type,
     )
+
     units.append(unit)
-    print(f"'{name}' 유닛을 추가했습니다.\n")
+    print("\n유닛이 추가되었습니다.\n")
 
 
 def level_up_unit_menu(units: List[Unit]) -> None:
+    ##유닛 레벨업 메뉴##
     if not units:
-        print("\n등록된 유닛이 없어서 레벨을 올릴 수 없습니다.\n")
+        print("\n[알림] 등록된 유닛이 없습니다.\n")
         return
 
     print("\n[유닛 레벨 올리기]")
-
-    selected_index = search_unit_menu_for_select(units)
-    if selected_index is None:
+    idx = search_unit_menu_for_select(units)
+    if idx is None:
+        print("레벨업을 취소합니다.\n")
         return
 
-    unit = units[selected_index]
-    before_level = unit.level
-    unit.level_up()
-
-    print(f"[완료] {unit.name}의 레벨이 {before_level} -> {unit.level}로 올랐습니다.\n")
-
-def bulk_level_up_menu(units: List[Unit]) -> None:
-    ##여러 유닛의 레벨을 한 번에 올리는 메뉴##
-    if not units:
-        print("\n등록된 유닛이 없어서 레벨을 올릴 수 없습니다.\n")
-        return
-    
-    print("\n[여러 유닛 일괄 레벨 올리기]")
-    print("1) 전체 유닛 레벨 올리기")
-    print("2) 검색 결과에 포함된 유닛만 레벨 올리기")
-    print("0) 취소")
-
-    choice = input("번호를 선택하세요: ").strip()
-
-    if choice == "1":
-        delta = input_int("몇 레벨을 올리겠습니까? (0 이상의 정수): ", allow_negative=False)
-        if delta <= 0:
-            print("0 이하는 변경이 없습니다. 일괄 레벨업을 취소합니다.\n")
-            return
-
-        if not confirm_yes_no(f"정말 모든 유닛의 레벨을 {delta}만큼 올리시겠습니까? (y/n): "):
-            print("일괄 레벨업을 취소했습니다.\n")
-            return
-
-        for unit in units:
-            for _ in range(delta):
-                unit.level_up()
-
-        print(f"[완료] 총 {len(units)}개 유닛의 레벨을 {delta}만큼 올렸습니다.\n")
-
-    elif choice == "2":
-        keyword = input_non_empty("검색할 이름(또는 일부)을 입력하세요: ")
-        search_results = search_units(units, keyword)
-
-        if not search_results:
-            print("검색 결과가 없습니다. 일괄 레벨업을 취소합니다.\n")
-            return
-
-        print_search_results(search_results, keyword)
-
-        delta = input_int("몇 레벨을 올리겠습니까? (0 이상의 정수): ", allow_negative=False)
-        if delta <= 0:
-            print("0 이하는 변경이 없습니다. 일괄 레벨업을 취소합니다.\n")
-            return
-
-        if not confirm_yes_no(
-            f"검색된 {len(search_results)}개 유닛의 레벨을 {delta}만큼 올리시겠습니까? (y/n): "
-        ):
-            print("일괄 레벨업을 취소했습니다.\n")
-            return
-
-        for _, unit in search_results:
-            for _ in range(delta):
-                unit.level_up()
-
-        print(f"[완료] 검색된 {len(search_results)}개 유닛의 레벨을 {delta}만큼 올렸습니다.\n")
-
-    elif choice == "0":
-        print("일괄 레벨업을 취소했습니다.\n")
-        return
-
-    else:
-        print("잘못된 번호입니다. 0~2 중에서 선택해주세요.\n")
+    unit = units[idx]
+    unit.level += 1
+    print(f"\n{unit.name}의 레벨이 {unit.level}로 올랐습니다!\n")
 
 
 def remove_unit_menu(units: List[Unit]) -> None:
+    ##유닛 삭제 메뉴##
     if not units:
-        print("\n등록된 유닛이 없어서 삭제할 수 없습니다.\n")
+        print("\n[알림] 등록된 유닛이 없습니다.\n")
         return
 
     print("\n[유닛 삭제하기]")
-
-    selected_index = search_unit_menu_for_select(units)
-    if selected_index is None:
+    idx = search_unit_menu_for_select(units)
+    if idx is None:
+        print("삭제를 취소합니다.\n")
         return
 
-    target_unit = units[selected_index]
-    print(f"선택된 유닛: {format_unit_brief(target_unit)}")
+    unit = units[idx]
+    print_unit_detail(unit)
 
-    if not confirm_yes_no("정말 삭제하시겠습니까? (y/n): "):
+    if confirm_yes_no("정말 삭제할까요? (y/n): "):
+        units.pop(idx)
+        print("삭제되었습니다.\n")
+    else:
         print("삭제를 취소했습니다.\n")
-        return
 
-    removed_unit = units.pop(selected_index)
-    print(f"[완료] {removed_unit.name} 유닛을 삭제했습니다.\n")
-
-def search_unit_menu(units: List[Unit]) -> None:
-    ##단순히 검색 결과 목록만 보여주는 메뉴##
-    if not units:
-        print("\n[알림] 등록된 유닛이 없습니다. 먼저 유닛을 추가하세요.\n")
-        return
-
-    print("\n[유닛 검색]")
-    keyword = input_non_empty("검색할 이름(또는 일부)을 입력하세요: ")
-
-    search_results = search_units(units, keyword)
-
-    if not search_results:
-        print(f"'{keyword}'(와)과 일치하는 유닛을 찾을 수 없습니다.\n")
-        return
-
-    print_search_results(search_results, keyword)
-
-def search_unit_menu_for_select(units: List[Unit]) -> Optional[int]:
-    ##검색어로 유닛을 찾고, 번호를 선택하여 units 리스트 인덱스를 반환한다##
-    if not units:
-        print("\n[알림] 등록된 유닛이 없습니다.\n")
-        return None
-
-    print("\n[유닛 검색]")
-    keyword = input_non_empty("검색할 이름(또는 일부)을 입력하세요: ")
-
-    search_results = search_units(units, keyword)
-
-    if not search_results:
-        print("검색 결과가 없습니다.\n")
-        return None
-
-    selected = select_from_list(
-        search_results,
-        title=f"'{keyword}' 검색 결과",
-        render_item=render_search_item,
-        allow_cancel=True,
-    )
-
-    if selected is None:
-        return None
-    
-    original_index, _ = search_results[selected]
-    return original_index
-
-def advanced_search_menu(units: List[Unit]) -> None:
-    ##레벨/ATK/HP/코스트/역할/타겟 타입 기준으로 필터해서 보여주는 고급검색 메뉴##
-    if not units:
-        print("\n[알림] 등록된 유닛이 없습니다. 먼저 유닛을 추가하세요.\n")
-        return
-
-    while True:
-        print("\n[고금 검색/필터]")
-        print("1) 최소 레벨 이상 유닛 보기")
-        print("2) 최소 ATK 이상 유닛 보기")
-        print("3) 최대 HP 이하 유닛 보기")
-        print("4) 최대 코스트 이하 유닛 보기")
-        print("5) 역할(Role)로 필터")
-        print("6) 타겟 타입으로 필터 (ground/air/both)")
-        print("7) 공격 타입으로 필터 (melee/ranged/magic)")
-        print("0) 돌아가기")
-
-        choice = input("번호를 선택하세요: ").strip()
-
-        if choice == "1":
-            min_level = input_int("최소 레벨을 입력하세요: ", allow_negative=False)
-            results = [
-                (i, u) for i, u in enumerate(units)
-                if u.level >= min_level
-            ]
-            print_indexed_results(results, f"레벨 >= {min_level}")
-
-        elif choice == "2":
-            min_atk = input_int("최소 ATK를 입력하세요: ", allow_negative=False)
-            results = [
-                (i, u) for i, u in enumerate(units)
-                if u.atk >= min_atk
-            ]
-            print_indexed_results(results, f"ATK >= {min_atk}")
-        
-        elif choice == "3":
-            max_hp = input_int("최대 HP를 입력하세요: ", allow_negative=False)
-            results = [
-                (i, u) for i, u in enumerate(units)
-                if u.hp <= max_hp
-            ]
-            print_indexed_results(results, f"HP <= {max_hp}")
-        
-        elif choice == "4":
-            max_cost = input_int("최대 코스트를 입력하세요: ", allow_negative=False)
-            results = [
-                (i, u) for i, u in enumerate(units)
-                if u.cost <= max_cost
-            ]
-            print_indexed_results(results, f"Cost <= {max_cost}")
-
-        elif choice == "5":
-            role = input_non_empty(
-                "필터할 역할(Role)을 입력하세요 (예: tower/enemy/hero): "
-            )
-            role_key = role.strip().lower()
-            results = [
-                (i, u) for i, u in enumerate(units)
-                if u.role.lower() == role_key
-            ]
-            print_indexed_results(results, f"Role == {role_key}")
-
-        elif choice == "6":
-            target = input_non_empty(
-                "필터할 타겟 타입을 입력하세요 (ground/air/both): "
-            )
-            target_key = target.strip().lower()
-            results = [
-                (i, u) for i, u in enumerate(units)
-                if u.target_type.lower() == target_key
-            ]
-            print_indexed_results(results, f"TargetType == {target_key}")
-
-        elif choice == "7": 
-            attack = input_non_empty(
-                "필터할 공격 타입을 입력하세요 (melee/ranged/magic 등): "
-            )
-            atk_type_key = attack.strip().lower()
-            results = [
-                (i, u) for i, u in enumerate(units)
-                if u.attack_type.lower() == atk_type_key
-            ]
-            print_indexed_results(results, f"AttackType == {atk_type_key}")
-
-        elif choice == "0":
-            print("고급 검색/필터 메뉴를 종료합니다.\n")
-            return
-        
-        else:
-            print("잘못된 번호입니다. 0~6 중에서 선택해주세요.\n")
-
-# ============================
-# 유닛 수정 서브 함수들
-# ============================
-
-def _edit_unit_name(unit: Unit) -> None:
-    new_name = input("새 이름을 입력하세요 (빈 입력 = 변경 안함): ").strip()
-    if not new_name:
-        print("이름 변경을 취소했습니다.\n")
-        return
-
-    print(f"이름: {unit.name} -> {new_name}")
-    unit.name = new_name
-    print("이름이 변경되었습니다.\n")
-
-
-def _edit_unit_level(unit: Unit) -> None:
-    new_level = input_int("새 레벨을 입력하세요(0 이상의 정수): ", allow_negative=False)
-    print(f"레벨: {unit.level} -> {new_level}")
-    unit.level = new_level
-    print("레벨이 변경되었습니다.\n")
-
-
-def _edit_unit_hp(unit: Unit) -> None:
-    new_hp = input_int("새 HP를 입력하세요(0 이상의 정수): ", allow_negative=False)
-    print(f"HP: {unit.hp} -> {new_hp}")
-    unit.hp = new_hp
-    print("HP가 변경되었습니다.\n")
-
-
-def _edit_unit_atk(unit: Unit) -> None:
-    new_atk = input_int("새 ATK를 입력하세요(0 이상의 정수): ", allow_negative=False)
-    print(f"ATK: {unit.atk} -> {new_atk}")
-    unit.atk = new_atk
-    print("ATK가 변경되었습니다.\n")
-
-def _edit_unit_role(unit: Unit) -> None:
-    print(f"현재 역할(Role): {unit.role}")
-    raw = input("새 역할을 입력하세요 (tower/enemy/hero 등, 빈 입력 = 변경 안함): ").strip()
-    if not raw:
-        print("역할 변경을 취소했습니다.\n")
-        return
-
-    print(f"역할: {unit.role} -> {raw}")
-    unit.role = raw
-    print("역할이 변경되었습니다.\n")
-
-
-def _edit_unit_cost(unit: Unit) -> None:
-    new_cost = input_int("새 코스트를 입력하세요(0 이상의 정수): ", allow_negative=False)
-    print(f"코스트: {unit.cost} -> {new_cost}")
-    unit.cost = new_cost
-    print("코스트가 변경되었습니다.\n")
-
-
-def _edit_unit_range(unit: Unit) -> None:
-    new_range = input_int("새 사거리를 입력하세요(0 이상의 정수): ", allow_negative=False)
-    print(f"사거리: {unit.range} -> {new_range}")
-    unit.range = new_range
-    print("사거리가 변경되었습니다.\n")
-
-def _edit_unit_attack_type(unit: Unit) -> None:
-    print(f"현재 공격 타입: {unit.attack_type}")
-    raw = input(
-        "새 공격 타입을 입력하세요 (melee/ranged/magic 등, 빈 입력 = 변경 안함): "
-    ).strip()
-    if not raw:
-        print("공격 타입 변경을 취소했습니다.\n")
-        return
-    
-    print(f"공격 타입: {unit.attack_type} -> {raw}")
-    unit.attack_type = raw
-    print("공격 타입이 변경되었습니다.\n")
-
-
-def _edit_unit_target_type(unit: Unit) -> None:
-    print(f"현재 타겟 타입: {unit.target_type}")
-    raw = input("새 타겟 타입을 입력하세요 (ground/air/both, 빈 입력 = 변경 안함): ").strip()
-    if not raw:
-        print("타겟 타입 변경을 취소했습니다.\n")
-        return
-
-    print(f"타겟 타입: {unit.target_type} -> {raw}")
-    unit.target_type = raw
-    print("타겟 타입이 변경되었습니다.\n")
-
-def _edit_unit_attack_speed(unit: Unit) -> None:
-    new_aspd = _input_float("새 공격 속도를 입력하세요 (예: 1, 1.5): ", allow_negative=False)
-    print(f"공격 속도: {unit.attack_speed} -> {new_aspd}")
-    unit.attack_speed = new_aspd
-    print("공격 속도가 변경되었습니다.\n")
-
-
-def _edit_unit_move_speed(unit: Unit) -> None:
-    new_mspd = _input_float("새 이동 속도를 입력하세요 (예: 1, 0.8): ", allow_negative=False)
-    print(f"이동 속도: {unit.move_speed} -> {new_mspd}")
-    unit.move_speed = new_mspd
-    print("이동 속도가 변경되었습니다.\n")
-
-
-def _edit_unit_growth(unit: Unit) -> None:
-    print(f"현재 레벨당 HP 증가량: {unit.hp_per_level}")
-    new_hp_per_level = input_int(
-        "레벨당 HP 증가량을 입력하세요(0 이상의 정수): ",
-        allow_negative=False,
-    )
-
-    print(f"현재 레벨당 ATK 증가량: {unit.atk_per_level}")
-    new_atk_per_level = input_int(
-        "레벨당 ATK 증가량을 입력하세요(0 이상의 정수): ",
-        allow_negative=False,
-    )
-
-    print(
-        f"레벨당 HP: {unit.hp_per_level} -> {new_hp_per_level}, "
-        f"레벨당 ATK: {unit.atk_per_level} -> {new_atk_per_level}"
-    )
-    unit.hp_per_level = new_hp_per_level
-    unit.atk_per_level = new_atk_per_level
-    print("성장 계수가 변경되었습니다.\n")
 
 def edit_unit_menu(units: List[Unit]) -> None:
-    print("\n[유닛 정보 수정하기]")
-
+    ##유닛 정보 수정 메뉴##
     if not units:
-        print("등록된 유닛이 없습니다.\n")
+        print("\n[알림] 등록된 유닛이 없습니다.\n")
         return
 
-    ##검색을 통해 수정할 유닛 선택##
-    selected_index = search_unit_menu_for_select(units)
-    if selected_index is None:
-        print("유닛 선택을 취소했습니다.\n")
-        return
-    if not (0 <= selected_index < len(units)):
-        print("잘못된 유닛 선택입니다.\n")
+    print("\n[유닛 정보 수정하기]")
+    idx = search_unit_menu_for_select(units)
+    if idx is None:
+        print("수정을 취소합니다.\n")
         return
 
-    unit = units[selected_index]
+    unit = units[idx]
+    print_unit_detail(unit)
 
     while True:
-        print_unit_detail(unit)
-        print("=== 수정할 유닛 정보 선택 ===")
-        print(f"현재: {format_unit_brief(unit)}")
-        print("1) 이름 수정")
-        print("2) 레벨 수정")
-        print("3) HP 수정")
-        print("4) ATK 수정")
-        print("5) 역할(Role) 수정")
-        print("6) 코스트 수정")
-        print("7) 사거리 수정")
-        print("8) 공격 속도 수정")
-        print("9) 이동 속도 수정")
-        print("10) 타겟 타입 수정")
-        print("11) 성장 계수(레벨당 HP/ATK) 수정")
-        print("12) 공격 타입 수정")
-        print("0) 취소 (수정 메뉴 종료)")
+        print("수정할 항목을 선택하세요:")
+        print("1) 이름")
+        print("2) 역할(Role)")
+        print("3) 레벨")
+        print("4) HP")
+        print("5) ATK")
+        print("6) 코스트")
+        print("7) 사거리(range)")
+        print("8) 공격 속도(attack_speed)")
+        print("9) 이동 속도(move_speed)")
+        print("10) 타겟 타입(target_type)")
+        print("11) 공격 타입(attack_type)")
+        print("0) 완료")
 
         choice = input("번호를 선택하세요: ").strip()
 
-        if choice == "1":
-            _edit_unit_name(unit)
-        elif choice == "2":
-            _edit_unit_level(unit)
-        elif choice == "3":
-            _edit_unit_hp(unit)
-        elif choice == "4":
-            _edit_unit_atk(unit)
-        elif choice == "5":
-            _edit_unit_role(unit)
-        elif choice == "6":
-            _edit_unit_cost(unit)
-        elif choice == "7":
-            _edit_unit_range(unit)
-        elif choice == "8":
-            _edit_unit_attack_speed(unit)
-        elif choice == "9":
-            _edit_unit_move_speed(unit)
-        elif choice == "10":
-            _edit_unit_target_type(unit)
-        elif choice == "11":
-            _edit_unit_growth(unit)
-        elif choice == "12":
-            _edit_unit_attack_type(unit)
-        elif choice == "0":
-            print("유닛 정보 수정을 종료합니다.\n")
+        if choice == "0":
+            print("수정을 완료했습니다.\n")
             return
+        elif choice == "1":
+            unit.name = input_non_empty("새 이름: ")
+        elif choice == "2":
+            unit.role = input("새 역할(Role): ").strip() or unit.role
+        elif choice == "3":
+            unit.level = input_int("새 레벨(정수): ")
+        elif choice == "4":
+            unit.hp = input_int("새 HP(정수): ")
+        elif choice == "5":
+            unit.atk = input_int("새 ATK(정수): ")
+        elif choice == "6":
+            unit.cost = input_int("새 코스트(정수): ")
+        elif choice == "7":
+            unit.range = input_int("새 사거리(range)(정수): ")
+        elif choice == "8":
+            unit.attack_speed = _input_float("새 공격 속도(예: 1.0): ")
+        elif choice == "9":
+            unit.move_speed = _input_float("새 이동 속도(예: 1.0): ", allow_negative=False)
+        elif choice == "10":
+            unit.target_type = input("새 타겟 타입(ground/air/tower/both): ").strip() or unit.target_type
+        elif choice == "11":
+            unit.attack_type = input("새 공격 타입(melee/ranged/magic...): ").strip() or unit.attack_type
         else:
-            print("잘못된 번호입니다. 0~11 중에서 선택해주세요.\n")
+            print("잘못된 선택입니다. 다시 입력해주세요.")
 
-def _get_unit_kind(unit: Unit) -> str:
-    ##role로부터 유닛이 ground/ari/tower 계열인지 유추##
-    r = unit.role.lower()
-    if "air" in r:
-        return "air"
-    if "tower" in r:
-        return "tower"
-    # boss_enemy, ground_enemy 등은 모두 지상으로 취급
-    return "ground"
+        print("\n[변경 후 유닛 정보]")
+        print_unit_detail(unit)
 
-def _can_attack_target(attacker: Unit, defender: Unit) -> bool:
-    ##attacker.target_type 과 defender.role(또는 kind)를 비교해서 공격 가능 여부를 판단##
-    atk_target = attacker.target_type.lower()
-    def_kind = _get_unit_kind(defender)
 
-    if atk_target == "both":
-        return True
-    if atk_target == "ground":
-        return def_kind == "ground"
-    if atk_target == "air":
-        return def_kind == "air"
-    if atk_target == "tower":
-        return def_kind == "tower"
+# ============================
+# 통계/프리셋/대량 작업
+# ============================
 
-    # 기타 값들은 일단 느슨하게 매칭
-    return atk_target == def_kind
+def print_units_stats(units: List[Unit]) -> None:
+    ##유닛 통계 출력##
+    if not units:
+        print("\n[알림] 등록된 유닛이 없습니다.\n")
+        return
 
-def _is_in_attack_range(attacker: Unit, defender: Unit, distance: float) -> bool:
-    ##공격 타입에 따라 사거리 판정##
-    atk_type = attacker.attack_type.lower()
-    if atk_type == "melee":
-        melee_range = 1.0
-        return distance <= melee_range
-    else:
-        # ranged, magic 등의 경우 Unit.range 사용
-        return distance <= attacker.range
+    avg_level = sum(u.level for u in units) / len(units)
+    avg_hp = sum(u.hp for u in units) / len(units)
+    avg_atk = sum(u.atk for u in units) / len(units)
 
-def simulate_duel(attacker: Unit, defender: Unit,
-                  initial_distance: float = 5.0,
-                  verbose: bool = True) -> dict:
-    """
-    사거리/이동속도/타겟타입/공격타입을 고려한 1차원(1D) 1:1 전투 시뮬레이션.
+    print("\n=== 유닛 통계 ===")
+    print(f"총 유닛 수 : {len(units)}")
+    print(f"평균 레벨  : {avg_level:.2f}")
+    print(f"평균 HP    : {avg_hp:.2f}")
+    print(f"평균 ATK   : {avg_atk:.2f}\n")
 
-    - 1차원 레인 위에 두 유닛을 두고,
-      시간에 따라 거리 = initial_distance - (move_speed 합) * t 로 줄어듦
-    - 공격 속도 → 1 / attack_speed 간격으로 공격 이벤트 발생
-    - 근접/원거리/마법, ground/air/both 타겟 타입 조건을 사용해
-      실제로 공격이 가능한지 판정
-    - 이동은 “거리 감소”로만 처리하는 단순 모델(좌표계 X)
 
-    반환값은 전투 로그를 요약한 dict이며, 항상 다음 키를 가진다.
+def bulk_add_units_menu(units: List[Unit]) -> None:
+    ##유닛 대량 추가(프리셋)##
+    presets = [
+        Unit("Knight", 1, 200, 25, role="defender", cost=3, range=1, attack_speed=1.0, move_speed=1.0, target_type="ground", attack_type="melee"),
+        Unit("Archer", 1, 120, 18, role="defender", cost=2, range=4, attack_speed=1.2, move_speed=1.0, target_type="ground", attack_type="ranged"),
+        Unit("Goblin", 1, 100, 15, role="ground_enemy", cost=1, range=1, attack_speed=1.2, move_speed=1.2, target_type="tower", attack_type="melee"),
+        Unit("Wyvern", 1, 180, 30, role="air_enemy", cost=4, range=1, attack_speed=1.0, move_speed=1.5, target_type="tower", attack_type="melee"),
+        Unit("AntiAirTower", 1, 150, 40, role="tower", cost=5, range=4, attack_speed=0.8, move_speed=0.0, target_type="air", attack_type="ranged"),
+    ]
 
-    - winner: "attacker" | "defender" | "draw" | "none"
-    - time: 전투가 종료될 때까지 걸린 시간(초)
-    - attacker_final_hp / defender_final_hp: 전투 종료 시 HP
-    - attacker_attacks / defender_attacks: 각 유닛의 총 공격 횟수
+    print("\n[유닛 대량 추가(프리셋)]")
+    print("아래 프리셋 유닛들을 한 번에 추가합니다.")
+    for u in presets:
+        print(f"- {format_unit_brief(u)}")
 
-    이 포맷은 simulate_duel_2d 및 자동 전투 실험에서 공통으로 사용된다.
-    """
+    if not confirm_yes_no("추가할까요? (y/n): "):
+        print("취소했습니다.\n")
+        return
 
-    a_hp = attacker.hp
-    d_hp = defender.hp
+    units.extend(presets)
+    print("\n프리셋 유닛을 추가했습니다.\n")
 
-    if attacker.attack_speed <= 0 and defender.attack_speed <= 0:
-        if verbose:
-            print("양쪽 모두 공격 속도가 0이라 전투가 진행되지 않습니다.")
-        return {
-            "winner": "none",
-            "time": 0.0,
-            "attacker_final_hp": a_hp,
-            "defender_final_hp": d_hp,
-            "attacker_attacks": 0,
-            "defender_attacks": 0,
-        }
-    
-    # 1) 공격 간격 계산
-    a_interval = float("inf") if attacker.attack_speed <= 0 else 1.0 / attacker.attack_speed
-    d_interval = float("inf") if defender.attack_speed <= 0 else 1.0 / defender.attack_speed
 
-    time = 0.0
-    next_a = 0.0 if a_interval != float("inf") else float("inf")
-    next_d = 0.0 if d_interval != float("inf") else float("inf")
-    a_attacks = 0
-    d_attacks = 0
+def bulk_level_up_menu(units: List[Unit]) -> None:
+    ##테스트용 대량 레벨업##
+    if not units:
+        print("\n[알림] 등록된 유닛이 없습니다.\n")
+        return
 
-    # 2) 상대방 방향으로의 상대 속도 (타워는 move_speed=0)
-    rel_speed = max(attacker.move_speed, 0.0) + max(defender.move_speed, 0.0)
-    eps = 1e-9
-    max_steps = 10000
+    print("\n[유닛 대량 레벨업(테스트용)]")
+    amount = input_int("모든 유닛을 몇 레벨 올릴까요? (정수): ")
+    if amount <= 0:
+        print("0 이하 입력으로 취소했습니다.\n")
+        return
 
-    def _max_effective_range(u: Unit) -> float:
-        if u.attack_speed <= 0:
-            return 0.0
-        if u.attack_type.lower() == "melee":
-            return 1.0
-        return float(u.range)
-    
-    # 3) 아무도 움직이지 않고, 서로 사거리 밖이면 전투 불가
-    max_range = max(_max_effective_range(attacker), _max_effective_range(defender))
-    if rel_speed <= 0 and initial_distance > max_range:
-        if verbose:
-            print("서로 사거리 안에 들어갈 수 없어 전투가 발생하지 않습니다.")
-        return {
-            "winner": "none",
-            "time": 0.0,
-            "attacker_final_hp": a_hp,
-            "defender_final_hp": d_hp,
-            "attacker_attacks": 0,
-            "defender_attacks": 0,
-        }
+    for u in units:
+        u.level += amount
+    print(f"\n모든 유닛 레벨을 +{amount} 했습니다.\n")
 
-    # 4) 메인 루프
-    for _ in range(max_steps):
-        if a_hp <= 0 or d_hp <= 0:
-            break
 
-        next_event = min(next_a, next_d)
-        if next_event == float("inf"):
-            if verbose:
-                print("더 이상 공격 이벤트가 없어 전투를 종료합니다.")
-            break
-
-        time = next_event
-
-        # 현재 시간에서의 거리 계산
-        if rel_speed > 0:
-            distance = max(0.0, initial_distance - rel_speed * time)
-        else:
-            distance = initial_distance
-
-        if verbose:
-            print(f"\n[시간 {time:.2f}s] 거리:{distance:.2f}, "
-                  f"{attacker.name} HP:{a_hp}, {defender.name} HP:{d_hp}")
-
-        # 공격자 턴
-        if next_a <= next_event + eps:
-            if _can_attack_target(attacker, defender) and _is_in_attack_range(attacker, defender, distance):
-                d_hp -= attacker.atk
-                a_attacks += 1
-                if verbose:
-                    print(f"  {attacker.name} -> {defender.name} "
-                          f"({attacker.atk} 피해, {defender.name} HP {max(d_hp, 0)})")
-            else:
-                if verbose:
-                    print(f"  {attacker.name} 공격 불가 (사거리/타겟 조건 미충족)")
-            next_a += a_interval
-
-        # 방어자 턴
-        if d_hp > 0 and next_d <= next_event + eps:
-            if _can_attack_target(defender, attacker) and _is_in_attack_range(defender, attacker, distance):
-                a_hp -= defender.atk
-                d_attacks += 1
-                if verbose:
-                    print(f"  {defender.name} -> {attacker.name} "
-                          f"({defender.atk} 피해, {attacker.name} HP {max(a_hp, 0)})")
-            else:
-                if verbose:
-                    print(f"  {defender.name} 공격 불가 (사거리/타겟 조건 미충족)")
-            next_d += d_interval
-
-        if a_hp <= 0 or d_hp <= 0:
-            break
-
-    else:
-        if verbose:
-            print("[주의] 최대 스텝에 도달하여 전투를 강제 종료했습니다.")
-
-    # 5) 승패 판정
-    if a_hp > 0 and d_hp <= 0:
-        winner = "attacker"
-    elif d_hp > 0 and a_hp <= 0:
-        winner = "defender"
-    elif a_hp <= 0 and d_hp <= 0:
-        winner = "draw"
-    else:
-        winner = "none"
-
-    return {
-        "winner": winner,
-        "time": time,
-        "attacker_final_hp": max(a_hp, 0),
-        "defender_final_hp": max(d_hp, 0),
-        "attacker_attacks": a_attacks,
-        "defender_attacks": d_attacks,
-    }
+# ============================
+# 전투 메뉴(UI)
+# ============================
 
 def battle_simulation_menu(units: List[Unit]) -> None:
     ##유닛 2개를 골라 1:1 전투를 시뮬레이션하는 메뉴##
@@ -812,14 +383,12 @@ def battle_simulation_menu(units: List[Unit]) -> None:
     print("선택한 두 유닛이 현재 스탯(HP / ATK / 공격 속도 기준)으로 싸웠을 때,")
     print("어느 쪽이 이기는지와 걸리는 시간을 확인할 수 있습니다.\n")
 
-    # 1) 공격자 선택
     print("[공격자 선택]")
     attacker_index = search_unit_menu_for_select(units)
     if attacker_index is None:
         print("전투 시뮬레이션을 취소합니다.\n")
         return
 
-    # 2) 방어자 선택
     print("[방어자 선택]")
     defender_index = search_unit_menu_for_select(units)
     if defender_index is None:
@@ -829,7 +398,6 @@ def battle_simulation_menu(units: List[Unit]) -> None:
     attacker = units[attacker_index]
     defender = units[defender_index]
 
-    # 3) 선택 결과 출력
     print("\n=== 선택된 유닛 ===")
     print("[공격자]")
     print_unit_detail(attacker)
@@ -842,119 +410,27 @@ def battle_simulation_menu(units: List[Unit]) -> None:
 
     verbose = confirm_yes_no("전투 로그를 턴마다 출력할까요? (y/n): ")
 
-    # 4) 전투 실행 (2D 시뮬레이션 사용)
     print("\n=== 전투 시작 ===")
     result = simulate_duel_2d(attacker, defender, verbose=verbose)
-
-    # 5) 결과 요약 출력 (공통 함수 호출)
     print_battle_summary(attacker, defender, result)
-
-def build_experiment_summary(
-        attacker: Unit,
-        defender: Unit,
-        trials: int,
-        total_time: float,
-        total_attacker_hp: float,
-        total_defender_hp: float,
-        total_attacker_attacks: int,
-        total_defender_attacks: int,
-        wins_attacker: int,
-        wins_defender: int,
-        draws: int,
-        no_result: int,
-) -> dict:
-    """
-    자동 전투 실험 결과를 하나의 dict로 요약하는 유틸 함수.
-
-    - 나중에 JSON/CSV로 저장하거나
-    - AI 학습/분석용 데이터로 사용할 때
-      한 번의 실험 단위를 그대로 기록할 수 있게 해준다.
-    """
-
-    summary = {
-        "attacker_name": attacker.name,
-        "defender_name": defender.name,
-        "attacker_level": attacker.level,
-        "defender_level": defender.level,
-        "trials": trials,
-        "wins_attacker": wins_attacker,
-        "wins_defender": wins_defender,
-        "draws": draws,
-        "no_result": no_result,
-        # 유닛의 현재 스탯 전체(입력 특징)를 그대로 포함
-        "attacker_unit": attacker.to_dict(),
-        "defender_unit": defender.to_dict(),
-    }
-
-    if trials > 0:
-        summary.update(
-            {
-                "attacker_win_rate": wins_attacker / trials,
-                "defender_win_rate": wins_defender / trials,
-                "draw_rate": draws / trials,
-                "no_result_rate": no_result / trials,
-                "avg_time": total_time / trials,
-                "avg_attacker_final_hp": total_attacker_hp / trials,
-                "avg_defender_final_hp": total_defender_hp / trials,
-                "avg_attacker_attacks": total_attacker_attacks / trials,
-                "avg_defender_attacks": total_defender_attacks / trials,
-            }
-        )
-    else:
-        # 이론상 0회 실험은 없겠지만, 방어적으로 0으로 채워둔다.
-        summary.update(
-            {
-                "attacker_win_rate": 0.0,
-                "defender_win_rate": 0.0,
-                "draw_rate": 0.0,
-                "no_result_rate": 0.0,
-                "avg_time": 0.0,
-                "avg_attacker_final_hp": 0.0,
-                "avg_defender_final_hp": 0.0,
-                "avg_attacker_attacks": 0.0,
-                "avg_defender_attacks": 0.0,
-            }
-        )
-
-    return summary
 
 
 def auto_battle_experiment_menu(units: List[Unit]) -> None:
-    """
-    같은 두 유닛 조합을 여러 번 자동 전투 시켜 통계를 내는 메뉴.
-
-    - 내부적으로 simulate_duel_2d()를 여러 번 호출한다.
-    - 매 실험마다 반환된 dict에서 필요한 값들을 누적한 뒤,
-      아래와 같은 통계를 계산해 출력한다.
-
-      * 공격자/방어자 승리 횟수 및 비율(승률)
-      * 동시 사망(draw) 횟수
-      * 어떤 쪽도 쓰러지지 않은(no_result) 횟수
-      * 평균 전투 시간
-      * 공격자/방어자 평균 남은 HP
-      * 공격자/방어자 평균 공격 횟수
-
-    이 구조는 나중에 AI/밸런싱 실험에서
-    - 특정 유닛 조합의 승률을 자동으로 측정하거나,
-    - 유닛 파라미터를 바꿔가며 실험 로그를 축적할 때
-    그대로 재사용할 수 있도록 설계되어 있다.
-    """
+    """전투 실험 자동화 메뉴."""
     if not units:
         print("\n[알림] 등록된 유닛이 없습니다. 먼저 유닛을 추가하세요.\n")
         return
 
-    print("\n[자동 전투 실험 - AI 시뮬레이션]")
-    print("선택한 두 유닛을 여러 번 자동으로 싸우게 하여")
-    print("승률, 평균 전투 시간, 평균 남은 HP 등을 확인합니다.\n")
+    print("\n[자동 전투 실험]")
+    print("선택한 두 유닛을 여러 번 싸우게 해서(동일 조건 반복),")
+    print("승률/평균 전투 시간/평균 남은 HP 등을 요약합니다.\n")
 
-    # 1) 공격자 선택
     print("[공격자 선택]")
     attacker_index = search_unit_menu_for_select(units)
     if attacker_index is None:
         print("자동 전투 실험을 취소합니다.\n")
         return
 
-    # 2) 방어자 선택
     print("[방어자 선택]")
     defender_index = search_unit_menu_for_select(units)
     if defender_index is None:
@@ -964,56 +440,45 @@ def auto_battle_experiment_menu(units: List[Unit]) -> None:
     attacker = units[attacker_index]
     defender = units[defender_index]
 
-    # 3) 선택 결과 출력
-    print("\n=== 선택된 유닛 ===")
-    print("[공격자]")
-    print_unit_detail(attacker)
-    print("[방어자]")
-    print_unit_detail(defender)
-
-    if not confirm_yes_no("이 구성으로 자동 전투 실험을 진행할까요? (y/n): "):
-        print("자동 전투 실험을 취소했습니다.\n")
+    trials = input_int("실험 횟수(trials)를 입력하세요 (예: 100): ")
+    if trials <= 0:
+        print("실험 횟수는 1 이상이어야 합니다.\n")
         return
 
-    # 4) 실험 횟수 입력
-    while True:
-        trials = input_int("시뮬레이션 횟수를 입력하세요 (1 이상, 예: 100): ")
-        if trials <= 0:
-            print("1 이상의 정수를 입력해주세요.")
-            continue
-        break
+    print("\n전투 모델을 선택하세요:")
+    print("1) 1D (거리 감소 + 사거리 판정)")
+    print("2) 2D (좌표 이동 + 사거리 판정)")
+    mode = input("번호를 선택하세요 (기본: 2): ").strip() or "2"
 
-    # 상세 로그는 반복 횟수가 적을 때만 물어본다
-    verbose_each = False
-    if trials <= 5:
-        verbose_each = confirm_yes_no(
-            "각 전투의 상세 로그도 출력할까요? (횟수가 많으면 n 추천) (y/n): "
-        )
-
-    # 5) 누적 통계용 변수들
-    #    (실험 로그나 AI 분석에 바로 사용할 수 있는 형태로 모아두는 값들)
-    total_time = 0.0
-    total_attacker_hp = 0.0
-    total_defender_hp = 0.0
-    total_attacker_attacks = 0
-    total_defender_attacks = 0
+    verbose_each = confirm_yes_no("각 전투의 로그를 출력할까요? (y/n): ")
 
     wins_attacker = 0
     wins_defender = 0
     draws = 0
     no_result = 0
 
-    first_result: dict | None = None
+    total_time = 0.0
+    total_attacker_hp = 0.0
+    total_defender_hp = 0.0
+    total_attacker_attacks = 0
+    total_defender_attacks = 0
 
-    # 6) 반복 전투 실행
-    for i in range(1, trials + 1):
-        if trials > 1:
-            print(f"\n--- [{i}/{trials}] 번째 전투 ---")
+    print("\n=== 자동 전투 실험 시작 ===")
+    for i in range(trials):
+        if mode == "1":
+            result = simulate_duel(attacker, defender, verbose=verbose_each)
+        else:
+            result = simulate_duel_2d(attacker, defender, verbose=verbose_each)
 
-        result = simulate_duel_2d(attacker, defender, verbose=verbose_each)
-
-        if first_result is None:
-            first_result = result
+        winner = result["winner"]
+        if winner == "attacker":
+            wins_attacker += 1
+        elif winner == "defender":
+            wins_defender += 1
+        elif winner == "draw":
+            draws += 1
+        else:
+            no_result += 1
 
         total_time += result["time"]
         total_attacker_hp += result["attacker_final_hp"]
@@ -1021,43 +486,9 @@ def auto_battle_experiment_menu(units: List[Unit]) -> None:
         total_attacker_attacks += result["attacker_attacks"]
         total_defender_attacks += result["defender_attacks"]
 
-        winner = result.get("winner", "none")
-        if winner == "attacker":
-            wins_attacker += 1
-        elif winner == "defender":
-            wins_defender += 1
-        elif winner == "draw":
-            draws += 1
-        else:
-            no_result += 1
+        if not verbose_each and (i + 1) % max(1, trials // 10) == 0:
+            print(f"  진행 중... {i+1}/{trials}")
 
-    # 7) 첫 번째 전투 예시 요약 (로그 안 찍었을 때만)
-    if first_result is not None and not verbose_each:
-        print("\n=== 첫 번째 전투 결과 예시 ===")
-        print_battle_summary(attacker, defender, first_result)
-
-    # 8) 통계 요약 출력
-    print("\n=== 자동 전투 실험 요약 ===")
-    print(f"실험 횟수: {trials}회")
-
-    if trials > 0:
-        print(f"공격자 승리 : {wins_attacker}회 ({wins_attacker / trials * 100:.1f}%)")
-        print(f"방어자 승리 : {wins_defender}회 ({wins_defender / trials * 100:.1f}%)")
-        if draws > 0:
-            print(f"무승부      : {draws}회 ({draws / trials * 100:.1f}%)")
-        if no_result > 0:
-            print(f"승패 미결정 : {no_result}회 ({no_result / trials * 100:.1f}%)")
-
-        print()
-        print(f"평균 전투 시간        : {total_time / trials:.2f}초")
-        print(f"공격자 평균 남은 HP   : {total_attacker_hp / trials:.1f}")
-        print(f"방어자 평균 남은 HP   : {total_defender_hp / trials:.1f}")
-        print(f"공격자 평균 공격 횟수 : {total_attacker_attacks / trials:.1f}")
-        print(f"방어자 평균 공격 횟수 : {total_defender_attacks / trials:.1f}")
-
-    print()
-
-    # 9) 실험 결과를 딕셔너리로 정리 (AI/로그 확장용)
     summary = build_experiment_summary(
         attacker=attacker,
         defender=defender,
@@ -1073,334 +504,13 @@ def auto_battle_experiment_menu(units: List[Unit]) -> None:
         no_result=no_result,
     )
 
-    # 지금은 단순히 콘솔에 dict 형태로만 보여준다.
-    print("[실험 요약 dict]")
+    print("\n=== 실험 결과 요약(dict) ===")
     print(summary)
     print()
 
 
-def simulate_duel_2d(
-    attacker: Unit,
-    defender: Unit,
-    attacker_pos: Tuple[float, float] = (0.0, 0.0),
-    defender_pos: Tuple[float, float] = (5.0, 0.0),
-    dt: float = 0.05,       # 이동/거리 업데이트 간격
-    max_time: float = 60.0, # 최대 전투 시간
-    verbose: bool = True,
-) -> dict:
-    """
-    2D 좌표 기반 1:1 전투 시뮬레이션.
-
-    - 공격자 / 방어자의 위치를 (x, y)로 관리
-    - 각 틱마다 서로를 향해 이동 (move_speed 사용)
-    - 공격 속도(attack_speed)에 따라 공격 타이밍 계산
-    - 사거리 판정은 거리(distance)에 대해 _is_in_attack_range() 사용
-
-    반환값은 1D 버전(simulate_duel)과 호환되는 dict 포맷을 기본으로 하며,
-    다음 정보를 포함한다.
-
-    [공통 키]
-    - winner: "attacker" | "defender" | "draw" | "none"
-    - time: 전투가 종료될 때까지 걸린 시간(초)
-    - attacker_final_hp / defender_final_hp
-    - attacker_attacks / defender_attacks
-
-    [2D 전용 추가 키]
-    - attacker_start_pos / defender_start_pos: 전투 시작 좌표 (x, y)
-    - attacker_final_pos / defender_final_pos: 전투 종료 좌표 (x, y)
-
-    따라서 print_battle_summary나 자동 실험 메뉴에서
-    1D/2D 결과를 같은 방식으로 다루고,
-    필요한 경우에만 2D 좌표 정보를 추가로 사용할 수 있다.
-    """
-
-    ax, ay = attacker_pos
-    dx, dy = defender_pos
-
-    a_hp = float(attacker.hp)
-    d_hp = float(defender.hp)
-
-    # 양쪽 다 공격 속도가 0이면 전투 불가
-    if attacker.attack_speed <= 0 and defender.attack_speed <= 0:
-        if verbose:
-            print("양쪽 모두 공격 속도가 0이라 전투가 진행되지 않습니다.")
-        return {
-            "winner": "none",
-            "time": 0.0,
-            "attacker_final_hp": a_hp,
-            "defender_final_hp": d_hp,
-            "attacker_attacks": 0,
-            "defender_attacks": 0,
-            "attacker_start_pos": attacker_pos,
-            "defender_start_pos": defender_pos,
-            "attacker_final_pos": attacker_pos,
-            "defender_final_pos": defender_pos,
-        }
-
-    # 다음 공격 시각 (이벤트 타임)
-    a_interval = math.inf if attacker.attack_speed <= 0 else 1.0 / attacker.attack_speed
-    d_interval = math.inf if defender.attack_speed <= 0 else 1.0 / defender.attack_speed
-
-    a_next = a_interval if a_interval < math.inf else math.inf
-    d_next = d_interval if d_interval < math.inf else math.inf
-
-    time = 0.0
-    a_attacks = 0
-    d_attacks = 0
-    eps = 1e-9
-
-    # 시작 위치 기록
-    attacker_start_pos = (ax, ay)
-    defender_start_pos = (dx, dy)
-
-    while time < max_time and a_hp > 0 and d_hp > 0:
-        # 1) 다음 '움직임 틱'과 '공격 이벤트' 중 가장 가까운 시간까지 진행
-        t_tick = time + dt
-        next_event = min(t_tick, a_next, d_next)
-        move_dt = max(0.0, next_event - time)
-
-        # 2) 서로를 향해 이동
-        if attacker.move_speed > 0 or defender.move_speed > 0:
-            vec_x = dx - ax
-            vec_y = dy - ay
-            dist = math.hypot(vec_x, vec_y)
-            if dist > 0:
-                dir_x = vec_x / dist
-                dir_y = vec_y / dist
-            else:
-                dir_x = dir_y = 0.0
-
-            # 공격자는 상대 방향으로, 방어자는 반대 방향으로 이동
-            ax += attacker.move_speed * dir_x * move_dt
-            ay += attacker.move_speed * dir_y * move_dt
-
-            dx -= defender.move_speed * dir_x * move_dt
-            dy -= defender.move_speed * dir_y * move_dt
-
-        time = next_event
-
-        # 3) 현재 거리 계산
-        distance = math.hypot(dx - ax, dy - ay)
-
-        if verbose:
-            print(
-                f"\n[시간 {time:.2f}s] "
-                f"거리:{distance:.2f}, "
-                f"{attacker.name} HP:{a_hp:.1f}, "
-                f"{defender.name} HP:{d_hp:.1f}"
-            )
-
-        # 4) 공격자 공격 처리
-        if time + eps >= a_next:
-            if _can_attack_target(attacker, defender) and _is_in_attack_range(attacker, defender, distance):
-                d_hp -= attacker.atk
-                a_attacks += 1
-                if verbose:
-                    print(
-                        f"  {attacker.name} -> {defender.name} "
-                        f"({attacker.atk} 피해, {defender.name} HP {max(d_hp, 0):.1f})"
-                    )
-            elif verbose:
-                print(f"  {attacker.name} 공격 불가 (사거리/타겟 조건 미충족)")
-            a_next += a_interval
-
-        # 5) 방어자 공격 처리
-        if d_hp > 0 and time + eps >= d_next:
-            if _can_attack_target(defender, attacker) and _is_in_attack_range(defender, attacker, distance):
-                a_hp -= defender.atk
-                d_attacks += 1
-                if verbose:
-                    print(
-                        f"  {defender.name} -> {attacker.name} "
-                        f"({defender.atk} 피해, {attacker.name} HP {max(a_hp, 0):.1f})"
-                    )
-            elif verbose:
-                print(f"  {defender.name} 공격 불가 (사거리/타겟 조건 미충족)")
-            d_next += d_interval
-
-        # 6) 사망 체크
-        if a_hp <= 0 or d_hp <= 0:
-            break
-
-    # 7) 승패 판정
-    if a_hp > 0 and d_hp <= 0:
-        winner = "attacker"
-    elif d_hp > 0 and a_hp <= 0:
-        winner = "defender"
-    elif a_hp <= 0 and d_hp <= 0:
-        winner = "draw"
-    else:
-        winner = "none"
-
-    return {
-        "winner": winner,
-        "time": time,
-        "attacker_final_hp": max(a_hp, 0),
-        "defender_final_hp": max(d_hp, 0),
-        "attacker_attacks": a_attacks,
-        "defender_attacks": d_attacks,
-        "attacker_start_pos": attacker_start_pos,
-        "defender_start_pos": defender_start_pos,
-        "attacker_final_pos": (ax, ay),
-        "defender_final_pos": (dx, dy),
-    }
-
-def print_battle_summary(attacker: Unit, defender: Unit, result: dict) -> None:
-    """전투 시뮬레이션 결과를 한 곳에서 출력하는 함수 (1D/2D 공통)."""
-
-    # === 공통 요약 출력 ===
-    print("\n=== 전투 결과 요약 ===")
-    print(f"총 경과 시간      : {result['time']:.2f}초")
-    print(f"공격자 공격 횟수  : {result['attacker_attacks']}")
-    print(f"방어자 공격 횟수  : {result['defender_attacks']}")
-    print(f"공격자 최종 HP    : {result['attacker_final_hp']}")
-    print(f"방어자 최종 HP    : {result['defender_final_hp']}")
-
-    winner = result.get("winner", "none")
-    if winner == "attacker":
-        print(f"승자: 공격자 {attacker.name}")
-    elif winner == "defender":
-        print(f"승자: 방어자 {defender.name}")
-        print()
-    elif winner == "draw":
-        print("결과: 동시 사망 (무승부)")
-    else:
-        print("결과: 어느 쪽도 상대를 쓰러뜨리지 못했습니다.")
-    print()
-
-    # === 2D 정보가 있으면 공간 요약도 출력 ===
-    # simulate_duel(1D) 결과에는 좌표 정보가 없고,
-    # simulate_duel_2d 결과에만 좌표가 있으니까, 키 존재 여부로 체크
-    if (
-        "attacker_start_pos" in result
-        and "attacker_final_pos" in result
-        and "defender_start_pos" in result
-        and "defender_final_pos" in result
-    ):
-        ax0, ay0 = result["attacker_start_pos"]
-        dx0, dy0 = result["defender_start_pos"]
-        ax1, ay1 = result["attacker_final_pos"]
-        dx1, dy1 = result["defender_final_pos"]
-
-        final_dist = math.hypot(dx1 - ax1, dy1 - ay1)
-
-        print("\n[공간 요약]")
-        print(f"공격자: 시작 ({ax0:.2f}, {ay0:.2f}) -> 최종 ({ax1:.2f}, {ay1:.2f})")
-        print(f"방어자: 시작 ({dx0:.2f}, {dy0:.2f}) -> 최종 ({dx1:.2f}, {dy1:.2f})")
-        print(f"최종 거리: {final_dist:.2f}")
-        print()
-
-# ============================
-# 전투 시나리오 프리셋 (테스트/밸런싱용)
-# ============================
-
-def _normalize_name(s: str) -> str:
-    return "".join(ch for ch in s.lower() if ch.isalnum())
-
-def _find_unit_by_name_fuzzy(units: List[Unit], name: str) -> Optional[Unit]:
-    """이름이 살짝 달라도(공백/대소문자) 최대한 찾아준다."""
-    key = _normalize_name(name)
-    for u in units:
-        if _normalize_name(u.name) == key:
-            return u
-    return None
-
-def _make_unit_from_spec(spec: dict) -> Unit:
-    """시나리오 스펙(dict)으로 Unit 임시 생성."""
-    return Unit(
-        name=spec.get("name", "Temp"),
-        level=spec.get("level", 1),
-        hp=spec.get("hp", 100),
-        atk=spec.get("atk", 10),
-        cost=spec.get("cost", 0),
-        role=spec.get("role", "ground"),
-        range=spec.get("range", 1),
-        attack_speed=spec.get("attack_speed", 1.0),
-        move_speed=spec.get("move_speed", 0.0),
-        target_type=spec.get("target_type", "ground"),
-        attack_type=spec.get("attack_type", "melee"),
-        hp_per_level=spec.get("hp_per_level", 0),
-        atk_per_level=spec.get("atk_per_level", 0),
-    )
-
-def _run_duel_trials_2d(
-    attacker: Unit,
-    defender: Unit,
-    trials: int,
-    attacker_pos: Tuple[float, float],
-    defender_pos: Tuple[float, float],
-    verbose_each: bool = False,
-) -> dict:
-    """2D 1:1 전투를 여러 번 돌린 뒤 build_experiment_summary 형태로 요약 dict 반환."""
-    if trials <= 0:
-        raise ValueError("trials must be >= 1")
-
-    total_time = 0.0
-    total_attacker_hp = 0.0
-    total_defender_hp = 0.0
-    total_attacker_attacks = 0
-    total_defender_attacks = 0
-
-    wins_attacker = 0
-    wins_defender = 0
-    draws = 0
-    no_result = 0
-
-    for _ in range(trials):
-        result = simulate_duel_2d(
-            attacker=attacker,
-            defender=defender,
-            attacker_pos=attacker_pos,
-            defender_pos=defender_pos,
-            verbose=verbose_each,
-        )
-
-        total_time += result.get("time", 0.0)
-        total_attacker_hp += result.get("attacker_final_hp", 0.0)
-        total_defender_hp += result.get("defender_final_hp", 0.0)
-        total_attacker_attacks += result.get("attacker_attacks", 0)
-        total_defender_attacks += result.get("defender_attacks", 0)
-
-        winner = result.get("winner", "none")
-        if winner == "attacker":
-            wins_attacker += 1
-        elif winner == "defender":
-            wins_defender += 1
-        elif winner == "draw":
-            draws += 1
-        else:
-            no_result += 1
-
-    summary = build_experiment_summary(
-        attacker=attacker,
-        defender=defender,
-        trials=trials,
-        total_time=total_time,
-        total_attacker_hp=total_attacker_hp,
-        total_defender_hp=total_defender_hp,
-        total_attacker_attacks=total_attacker_attacks,
-        total_defender_attacks=total_defender_attacks,
-        wins_attacker=wins_attacker,
-        wins_defender=wins_defender,
-        draws=draws,
-        no_result=no_result,
-    )
-
-    # 시나리오 파라미터도 같이 기록
-    summary["attacker_pos"] = attacker_pos
-    summary["defender_pos"] = defender_pos
-
-    return summary
-
 def battle_scenarios_menu(units: List[Unit]) -> None:
-    """battle_scenarios_*.md에 맞춘 '프리셋 시나리오' 실행 메뉴.
-
-    - 기본은 '시나리오 스펙대로 임시 유닛 생성'해서 실행
-    - 필요하면 현재 units.json에 저장된 유닛으로도 실행 가능(이름 퍼지 매칭)
-    """
-
-    # 현재 버전 기준: _can_attack_target()이 role에서 kind(ground/air/tower)를 유추하므로,
-    # 시나리오 스펙도 그 규칙에 맞춰 role/target_type을 잡아준다.
+    """battle_scenarios_*.md에 맞춘 '프리셋 시나리오' 실행 메뉴."""
     scenarios = [
         {
             "title": "Knight vs Goblin (근접 기본 밸런스)",
@@ -1409,39 +519,40 @@ def battle_scenarios_menu(units: List[Unit]) -> None:
                 "level": 1,
                 "hp": 200,
                 "atk": 25,
-                "role": "tower",
+                "role": "defender",
                 "range": 1,
                 "attack_speed": 1.0,
-                "move_speed": 0.0,
+                "move_speed": 1.0,
                 "target_type": "ground",
                 "attack_type": "melee",
             },
             "defender_spec": {
                 "name": "Goblin",
                 "level": 1,
-                "hp": 80,
+                "hp": 100,
                 "atk": 15,
-                "role": "ground",
+                "role": "ground_enemy",
                 "range": 1,
-                "attack_speed": 1.0,
-                "move_speed": 1.5,
+                "attack_speed": 1.2,
+                "move_speed": 1.2,
                 "target_type": "tower",
                 "attack_type": "melee",
             },
-            "attacker_pos": (0.0, 0.0),
-            "defender_pos": (10.0, 0.0),
             "trials": 100,
+            "attacker_pos": (0.0, 0.0),
+            "defender_pos": (5.0, 0.0),
+            "verbose_each": False,
         },
         {
-            "title": "AntiAirTower vs Wyvern (공중 유닛 대응)",
+            "title": "AntiAirTower vs Wyvern (대공 타워 검증)",
             "attacker_spec": {
                 "name": "AntiAirTower",
                 "level": 1,
-                "hp": 250,
-                "atk": 30,
+                "hp": 150,
+                "atk": 40,
                 "role": "tower",
-                "range": 6,
-                "attack_speed": 1.2,
+                "range": 4,
+                "attack_speed": 0.8,
                 "move_speed": 0.0,
                 "target_type": "air",
                 "attack_type": "ranged",
@@ -1449,49 +560,50 @@ def battle_scenarios_menu(units: List[Unit]) -> None:
             "defender_spec": {
                 "name": "Wyvern",
                 "level": 1,
-                "hp": 120,
-                "atk": 20,
-                "role": "air",
+                "hp": 180,
+                "atk": 30,
+                "role": "air_enemy",
                 "range": 1,
                 "attack_speed": 1.0,
-                "move_speed": 2.0,
-                # 현재 버전의 기본 적 로직에 맞춰 '타워를 치는' 타겟으로 둔다.
+                "move_speed": 1.5,
                 "target_type": "tower",
                 "attack_type": "melee",
             },
-            "attacker_pos": (0.0, 0.0),
-            "defender_pos": (12.0, 0.0),
             "trials": 100,
+            "attacker_pos": (0.0, 0.0),
+            "defender_pos": (6.0, 0.0),
+            "verbose_each": False,
         },
         {
-            "title": "Assassin vs Giant (공속/이동/근접 딜교)",
+            "title": "Assassin vs Giant (속도/공속 상성 테스트)",
             "attacker_spec": {
                 "name": "Assassin",
                 "level": 1,
-                "hp": 90,
-                "atk": 22,
-                "role": "ground",
+                "hp": 80,
+                "atk": 35,
+                "role": "ground_enemy",
                 "range": 1,
                 "attack_speed": 1.8,
-                "move_speed": 2.2,
+                "move_speed": 1.8,
                 "target_type": "ground",
                 "attack_type": "melee",
             },
             "defender_spec": {
                 "name": "Giant",
                 "level": 1,
-                "hp": 260,
-                "atk": 35,
-                "role": "ground",
+                "hp": 300,
+                "atk": 60,
+                "role": "ground_enemy",
                 "range": 1,
-                "attack_speed": 0.7,
-                "move_speed": 1.0,
+                "attack_speed": 0.6,
+                "move_speed": 0.6,
                 "target_type": "ground",
                 "attack_type": "melee",
             },
-            "attacker_pos": (0.0, 0.0),
-            "defender_pos": (8.0, 0.0),
             "trials": 100,
+            "attacker_pos": (0.0, 0.0),
+            "defender_pos": (4.0, 0.0),
+            "verbose_each": False,
         },
     ]
 
@@ -1514,42 +626,46 @@ def battle_scenarios_menu(units: List[Unit]) -> None:
 
     scenario = scenarios[idx]
 
-    # 실행 모드: 저장된 유닛을 사용할지 / 시나리오 스펙대로 임시 생성할지
     use_saved = confirm_yes_no("현재 저장된 유닛(units.json)으로 실행할까요? (y/n): ")
 
     if use_saved:
         a_name = scenario["attacker_spec"]["name"]
         d_name = scenario["defender_spec"]["name"]
 
-        attacker = _find_unit_by_name_fuzzy(units, a_name)
-        defender = _find_unit_by_name_fuzzy(units, d_name)
+        attacker = find_unit_by_name_fuzzy(units, a_name)
+        defender = find_unit_by_name_fuzzy(units, d_name)
 
         if attacker is None or defender is None:
-            print("\n[주의] 저장된 유닛에서 이름을 찾지 못했습니다.")
-            print("      → 시나리오 스펙 기반 임시 유닛으로 실행합니다.\n")
-            attacker = _make_unit_from_spec(scenario["attacker_spec"])
-            defender = _make_unit_from_spec(scenario["defender_spec"])
+            print("\n[경고] 저장된 유닛에서 이름이 일치하는 유닛을 찾지 못했습니다.")
+            print("시나리오 스펙대로 임시 유닛을 생성해서 실행합니다.\n")
+            attacker = make_unit_from_spec(scenario["attacker_spec"])
+            defender = make_unit_from_spec(scenario["defender_spec"])
     else:
-        attacker = _make_unit_from_spec(scenario["attacker_spec"])
-        defender = _make_unit_from_spec(scenario["defender_spec"])
+        attacker = make_unit_from_spec(scenario["attacker_spec"])
+        defender = make_unit_from_spec(scenario["defender_spec"])
 
-    attacker_pos = scenario["attacker_pos"]
-    defender_pos = scenario["defender_pos"]
-    trials = scenario["trials"]
+    trials = int(scenario.get("trials", 100))
+    attacker_pos = scenario.get("attacker_pos", (0.0, 0.0))
+    defender_pos = scenario.get("defender_pos", (5.0, 0.0))
+    verbose_each = bool(scenario.get("verbose_each", False))
 
-    print(f"\n[선택된 시나리오] {scenario['title']}")
+    print("\n=== 선택된 시나리오 ===")
+    print(f"- {scenario['title']}")
     print(f"- trials: {trials}")
-    print(f"- attacker: {attacker.name} / role={attacker.role} / target={attacker.target_type}")
-    print(f"- defender: {defender.name} / role={defender.role} / target={defender.target_type}")
-    print(f"- pos: attacker={attacker_pos}, defender={defender_pos}")
+    print(f"- attacker_pos: {attacker_pos}")
+    print(f"- defender_pos: {defender_pos}\n")
 
-    verbose_each = False
-    if trials <= 10:
-        # trials가 작으면 매번 로그를 찍어도 괜찮은데, 그래도 선택권 제공
-        verbose_each = confirm_yes_no("각 전투 로그도 모두 출력할까요? (y/n): ")
+    print("[공격자]")
+    print_unit_detail(attacker)
+    print("[방어자]")
+    print_unit_detail(defender)
+
+    if not confirm_yes_no("이 구성으로 시나리오 실험을 실행할까요? (y/n): "):
+        print("시나리오 실행을 취소했습니다.\n")
+        return
 
     print("\n=== 자동 전투 실험 시작 ===")
-    summary = _run_duel_trials_2d(
+    summary = run_duel_trials_2d(
         attacker=attacker,
         defender=defender,
         trials=trials,

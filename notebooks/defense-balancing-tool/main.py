@@ -2,24 +2,25 @@
 
 - JSON 파일에서 유닛 목록을 로드하고,
 - 콘솔 메뉴를 통해 유닛 관리/검색/통계/전투 시뮬레이션/자동 전투 실험을 실행한다.
-- 실제 전투 로직과 실험 로직은 unit_logic.py 에 정의되어 있다.
+- 전투 '계산 로직'은 battle_sim.py, 콘솔 메뉴(UI)는 unit_logic.py 에서 담당한다.
 """
 
 from unit_io import load_units_from_file, save_units_to_file
 from unit_logic import (
-    print_units, 
-    add_unit_menu, 
-    level_up_unit_menu, 
-    remove_unit_menu, 
+    print_units,
+    add_unit_menu,
+    level_up_unit_menu,
+    remove_unit_menu,
     search_unit_menu,
     edit_unit_menu,
     print_units_stats,
-    advanced_search_menu,
+    bulk_add_units_menu,
     bulk_level_up_menu,
     battle_simulation_menu,
     auto_battle_experiment_menu,
     battle_scenarios_menu,
 )
+
 
 def main_loop():
     """콘솔 메뉴 루프를 돌면서 유닛 관리/전투 시뮬레이션 관련 기능을 호출한다."""
@@ -33,12 +34,12 @@ def main_loop():
         print("5) 유닛 검색하기")
         print("6) 유닛 정보 수정하기")
         print("7) 유닛 통계 보기")
-        print("8) 고급 검색/필터")
-        print("9) 여러 유닛 일괄 레벨 올리기")
-        print("10) 전투 시뮬레이션 (1 대 1)")
-        print("11) 자동 전투 실험 (AI 시뮬레이션)")
-        print("12) 전투 시나리오 프리셋 실행")
-        print("0) 종료")
+        print("8) 유닛 대량 추가(프리셋)")
+        print("9) 유닛 대량 레벨업(테스트용)")
+        print("10) 전투 시뮬레이션(1대1)")
+        print("11) 자동 전투 실험(trials)")
+        print("12) 전투 시나리오 프리셋")
+        print("13) 종료")
 
         choice = input("번호를 선택하세요: ").strip()
 
@@ -57,7 +58,7 @@ def main_loop():
         elif choice == "7":
             print_units_stats(units)
         elif choice == "8":
-            advanced_search_menu(units)
+            bulk_add_units_menu(units)
         elif choice == "9":
             bulk_level_up_menu(units)
         elif choice == "10":
@@ -66,12 +67,13 @@ def main_loop():
             auto_battle_experiment_menu(units)
         elif choice == "12":
             battle_scenarios_menu(units)
-        elif choice == "0":
-            print("프로그램을 종료합니다.")
+        elif choice == "13":
             save_units_to_file(units)
+            print("저장 후 종료합니다.")
             break
         else:
-            print("잘못 입력했습니다. 다시 선택하세요.")
+            print("잘못된 선택입니다. 다시 입력해주세요.\n")
+
 
 if __name__ == "__main__":
     main_loop()
