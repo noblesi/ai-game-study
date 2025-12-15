@@ -89,3 +89,19 @@ def select_from_list(
             return num - 1
         
         print("범위를 벗어났습니다. 다시 선택해주세요.")
+        
+import json
+from datetime import datetime
+from pathlib import Path
+
+def append_jsonl(path: str, record: dict) -> None:
+    """record(dict)를 JSONL 한 줄로 append 저장한다. (디렉터리 자동 생성)"""
+    p = Path(path)
+    if p.parent and str(p.parent) != ".":
+        p.parent.mkdir(parents=True, exist_ok=True)
+
+    if isinstance(record, dict) and "logged_at" not in record:
+        record = {**record, "logged_at": datetime.now().isoformat(timespec="seconds")}
+
+    with p.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")

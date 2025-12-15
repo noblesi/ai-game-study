@@ -15,7 +15,7 @@
 import math
 from typing import List, Optional, Tuple
 from unit_model import Unit
-from utils import input_int, input_non_empty, select_from_list, confirm_yes_no
+from utils import input_int, input_non_empty, select_from_list, confirm_yes_no, append_jsonl
 from battle_sim import (
     simulate_duel,
     simulate_duel_2d,
@@ -25,6 +25,8 @@ from battle_sim import (
     make_unit_from_spec,
     run_duel_trials_2d,
 )
+
+from scenario_loader import load_scenarios_from_markdown
 
 # ============================
 # 공통 유틸 함수들
@@ -218,8 +220,8 @@ def level_up_unit_menu(units: List[Unit]) -> None:
         return
 
     unit = units[idx]
-    unit.level += 1
-    print(f"\n{unit.name}의 레벨이 {unit.level}로 올랐습니다!\n")
+    unit.level_up()
+    print(f"\n{unit.name}이(가) 레벨업! (Lv.{unit.level}, HP:{unit.hp}, ATK:{unit.atk})\n")
 
 
 def remove_unit_menu(units: List[Unit]) -> None:
@@ -366,7 +368,9 @@ def bulk_level_up_menu(units: List[Unit]) -> None:
 
     for u in units:
         u.level += amount
-    print(f"\n모든 유닛 레벨을 +{amount} 했습니다.\n")
+        u.hp += u.hp_per_level * amount
+        u.atk += u.atk_per_level * amount
+    print(f"\n모든 유닛 레벨을 +{amount} 했습니다. (HP/ATK 성장치 포함)\n")
 
 
 # ============================
@@ -508,10 +512,20 @@ def auto_battle_experiment_menu(units: List[Unit]) -> None:
     print(summary)
     print()
 
+    if confirm_yes_no("이 결과를 JSONL로 저장할까요? (y/n): "):
+        path = input("저장 경로(기본: logs/experiments.jsonl): ").strip() or "logs/experiments.jsonl"
+        append_jsonl(path, {"kind": "auto_experiment", "summary": summary})
+        print(f"[저장 완료] {path}\n")
+
+
 
 def battle_scenarios_menu(units: List[Unit]) -> None:
     """battle_scenarios_*.md에 맞춘 '프리셋 시나리오' 실행 메뉴."""
-    scenarios = [
+    md_scenarios = load_scenarios_from_markdown()
+    if md_scenarios:
+        scenarios = md_scenarios
+    else:
+        scenarios = [
         {
             "title": "Knight vs Goblin (근접 기본 밸런스)",
             "attacker_spec": {
@@ -531,11 +545,11 @@ def battle_scenarios_menu(units: List[Unit]) -> None:
                 "level": 1,
                 "hp": 100,
                 "atk": 15,
-                "role": "ground_enemy",
+                "role": "ground",
                 "range": 1,
                 "attack_speed": 1.2,
                 "move_speed": 1.2,
-                "target_type": "tower",
+                "target_type": "ground",
                 "attack_type": "melee",
             },
             "trials": 100,
@@ -581,7 +595,7 @@ def battle_scenarios_menu(units: List[Unit]) -> None:
                 "level": 1,
                 "hp": 80,
                 "atk": 35,
-                "role": "ground_enemy",
+                "role": "ground",
                 "range": 1,
                 "attack_speed": 1.8,
                 "move_speed": 1.8,
@@ -645,8 +659,8 @@ def battle_scenarios_menu(units: List[Unit]) -> None:
         defender = make_unit_from_spec(scenario["defender_spec"])
 
     trials = int(scenario.get("trials", 100))
-    attacker_pos = scenario.get("attacker_pos", (0.0, 0.0))
-    defender_pos = scenario.get("defender_pos", (5.0, 0.0))
+    attacker_pos = tuple(scenario.get("attacker_pos", (0.0, 0.0)))
+    defender_pos = tuple(scenario.get("defender_pos", (5.0, 0.0)))
     verbose_each = bool(scenario.get("verbose_each", False))
 
     print("\n=== 선택된 시나리오 ===")
@@ -677,3 +691,8 @@ def battle_scenarios_menu(units: List[Unit]) -> None:
     print("\n=== 시나리오 실험 요약(dict) ===")
     print(summary)
     print()
+
+    if confirm_yes_no("이 결과를 JSONL로 저장할까요? (y/n): "):
+        path = input("저장 경로(기본: logs/scenarios.jsonl): ").strip() or "logs/scenarios.jsonl"
+        append_jsonl(path, {"kind": "scenario_preset", "scenario_title": scenario.get("title"), "summary": summary})
+        print(f"[저장 완료] {path}\n")

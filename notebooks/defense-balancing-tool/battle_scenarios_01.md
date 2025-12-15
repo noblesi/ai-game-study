@@ -1,37 +1,77 @@
 ### 시나리오 1: Knight vs Goblin 1:1
 
 ### 목적
-- 근접 탱커(Knight)가 일반 근접 잡몹(Goblin)을 상대로
-  압도적으로 이기는지, 간신히 이기는지, 역전도 자주 나는지 확인.
-- 기본 근접 전투 밸런스 기준점 잡기.
+- 근접 탱커(Knight)가 일반 근접 잡몹(Goblin)을 상대로 얼마나 안정적으로 이기는지 확인
+- 기본 근접 전투 밸런스 기준점 잡기
+
+### 시나리오 스펙(JSON)
+```json
+{
+  "title": "시나리오 1: Knight vs Goblin 1:1",
+  "attacker_spec": {
+    "name": "Knight",
+    "level": 1,
+    "hp": 200,
+    "atk": 25,
+    "role": "defender",
+    "range": 1,
+    "attack_speed": 1.0,
+    "move_speed": 1.0,
+    "target_type": "ground",
+    "attack_type": "melee"
+  },
+  "defender_spec": {
+    "name": "Goblin",
+    "level": 1,
+    "hp": 100,
+    "atk": 15,
+    "role": "ground",
+    "range": 1,
+    "attack_speed": 1.2,
+    "move_speed": 1.2,
+    "target_type": "ground",
+    "attack_type": "melee"
+  },
+  "trials": 100,
+  "attacker_pos": [
+    0.0,
+    0.0
+  ],
+  "defender_pos": [
+    5.0,
+    0.0
+  ],
+  "verbose_each": false
+}
+```
 
 ### 유닛 설정
 - 공격자(Attacker)
-  - 이름: Knight
-  - 레벨: 1
-  - hp / atk: 200 / 25
+  - name: Knight
+  - level: 1
+  - hp: 200
+  - atk: 25
   - role: defender
   - range: 1
-  - attack_speed: 1.0   # 초당 1회 공격
+  - attack_speed: 1.0
   - move_speed: 1.0
   - target_type: ground
   - attack_type: melee
 - 방어자(Defender)
-  - 이름: Goblin
-  - 레벨: 1
-  - hp / atk: 100 / 15
+  - name: Goblin
+  - level: 1
+  - hp: 100
+  - atk: 15
   - role: ground
   - range: 1
-  - attack_speed: 1.2   # 살짝 더 빠름
+  - attack_speed: 1.2
   - move_speed: 1.2
   - target_type: ground
   - attack_type: melee
 
-### 시뮬레이션 설정
-- 사용 함수: simulate_duel_2d
-- 초기 위치:
-  - attacker_pos: (0.0, 0.0)
-  - defender_pos: (5.0, 0.0)
+### 초기 위치
+- attacker_pos: (0.0, 0.0)
+- defender_pos: (5.0, 0.0)
 - 실험 횟수(trials): 100
 - verbose_each: False
 
@@ -41,5 +81,5 @@
 - Knight 평균 남은 HP
 
 ### 메모
-- 목표: Knight 승률이 70~80% 정도면 적당하다고 가정.
-- 너무 100%면 Goblin이 너무 약한 것, 50% 언저리면 Knight가 약한 것.
+- 목표 예시: Knight 승률 70~80%면 적당
+- 너무 100%면 Goblin이 너무 약한 것, 50% 언저리면 Knight가 약한 것
