@@ -640,24 +640,10 @@ def battle_scenarios_menu(units: List[Unit]) -> None:
 
     scenario = scenarios[idx]
 
-    use_saved = confirm_yes_no("현재 저장된 유닛(units.json)으로 실행할까요? (y/n): ")
-
-    if use_saved:
-        a_name = scenario["attacker_spec"]["name"]
-        d_name = scenario["defender_spec"]["name"]
-
-        attacker = find_unit_by_name_fuzzy(units, a_name)
-        defender = find_unit_by_name_fuzzy(units, d_name)
-
-        if attacker is None or defender is None:
-            print("\n[경고] 저장된 유닛에서 이름이 일치하는 유닛을 찾지 못했습니다.")
-            print("시나리오 스펙대로 임시 유닛을 생성해서 실행합니다.\n")
-            attacker = make_unit_from_spec(scenario["attacker_spec"])
-            defender = make_unit_from_spec(scenario["defender_spec"])
-    else:
-        attacker = make_unit_from_spec(scenario["attacker_spec"])
-        defender = make_unit_from_spec(scenario["defender_spec"])
-
+    # 시나리오 실행은 "시나리오 스펙"을 단일 소스(SSOT)로 사용한다.
+    # units.json 스펙과 섞이면 결과 재현/비교가 어려워질 수 있다.
+    attacker = make_unit_from_spec(scenario["attacker_spec"])
+    defender = make_unit_from_spec(scenario["defender_spec"])
     trials = int(scenario.get("trials", 100))
     attacker_pos = tuple(scenario.get("attacker_pos", (0.0, 0.0)))
     defender_pos = tuple(scenario.get("defender_pos", (5.0, 0.0)))
@@ -694,5 +680,13 @@ def battle_scenarios_menu(units: List[Unit]) -> None:
 
     if confirm_yes_no("이 결과를 JSONL로 저장할까요? (y/n): "):
         path = input("저장 경로(기본: logs/scenarios.jsonl): ").strip() or "logs/scenarios.jsonl"
-        append_jsonl(path, {"kind": "scenario_preset", "scenario_title": scenario.get("title"), "summary": summary})
+        record = {
+            "kind": "scenario_preset",
+            "scenario_title": scenario.get("title"),
+            "scenario_source": scenario.get("_source"),
+            "spec_source": "scenario_spec",
+            "scenario_spec": scenario,
+            "summary": summary,
+        }
+        append_jsonl(path, record)
         print(f"[저장 완료] {path}\n")
