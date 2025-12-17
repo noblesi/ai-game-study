@@ -56,6 +56,16 @@ def parse_dt(x: str) -> datetime.datetime:
         return datetime.datetime.fromisoformat(x)
     except Exception:
         return datetime.datetime.min
+    
+def schema_of(r: Dict[str, Any]) -> str:
+    v = r.get("schema_version")
+    return v if isinstance(v, str) and v.strip() else "legacy"
+
+def short_id(x: Any, n: int = 8) -> str:
+    if not isinstance(x, str):
+        return "-"
+    x = x.strip()
+    return x[:n] if x else "-"
 
 def write_report(records: List[Dict[str, Any]], errors: List[str], out_path: str, recent_n: int) -> None:
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
@@ -70,6 +80,15 @@ def write_report(records: List[Dict[str, Any]], errors: List[str], out_path: str
     md.append("# Scenario Summary Report\n\n")
     md.append(f"- Generated at: {now}\n")
     md.append(f"- Input records: {len(records)} (scenario_preset: {len(scenario_recs)})\n")
+    # schema_version 분포 (v1 도입 이후: legacy / v1 ...)
+    ver_counts: Dict[str, int] = defaultdict(int)
+    for r in records:
+        ver_counts[schema_of(r)] += 1
+    ver_text = ", ".join([f"{k}:{v}" for k, v in sorted(ver_counts.items(), key=lambda kv: kv[0])])
+    md.append(f"- Schema versions: {ver_text}\n")
+    if len(ver_counts) > 1:
+        md.append(f"- ⚠️ Mixed schema versions detected. Consider migrating legacy logs to v1.\n")
+
     if errors:
         md.append(f"- Parse warnings: {len(errors)} (see bottom)\n")
     md.append("\n---\n\n")
@@ -155,13 +174,14 @@ def write_report(records: List[Dict[str, Any]], errors: List[str], out_path: str
         )
 
         md.append("\n**Recent runs**\n\n")
-        md.append("| logged_at | attacker | defender | trials | attacker_win_rate | avg_time |\n")
-        md.append("|---|---|---|---:|---:|---:|\n")
+        md.append("| logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |\n")
+        md.append("|---|---|---|---|---|---|---:|---:|---:|\n")
         for r in sorted(recs, key=lambda rr: parse_dt(rr.get("logged_at","")), reverse=True)[:recent_n]:
             s = r["summary"]
             md.append(
-                f"| {r.get('logged_at','-')} | {s.get('attacker_name','-')} | {s.get('defender_name','-')} | "
-                f"{s.get('trials','-')} | {fmt_pct(s.get('attacker_win_rate'))} | {fmt_num(s.get('avg_time'))} |\n"
+                f"| {r.get('logged_at','-')} | {schema_of(r)} | {r.get('engine','-')} | {short_id(r.get('run_id'))} | "
+                f"{s.get('attacker_name','-')} | {s.get('defender_name','-')} | {s.get('trials','-')} | "
+                f"{fmt_pct(s.get('attacker_win_rate'))} | {fmt_num(s.get('avg_time'))} |\n"
             )
 
         recent = sorted(recs, key=lambda rr: parse_dt(rr.get("logged_at","")), reverse=True)[0]

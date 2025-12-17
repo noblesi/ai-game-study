@@ -13,6 +13,7 @@
 """
 
 import math
+import uuid
 from typing import List, Optional, Tuple
 from unit_model import Unit
 from utils import input_int, input_non_empty, select_from_list, confirm_yes_no, append_jsonl
@@ -27,6 +28,22 @@ from battle_sim import (
 )
 
 from scenario_loader import load_scenarios_from_markdown
+
+# ============================
+# 로그 스키마 v1 (SSOT)
+# ============================
+
+LOG_SCHEMA_VERSION = "v1"
+
+def _new_log_envelope(kind: str, engine: str) -> dict:
+    """JSONL 로그 레코드의 공통 메타(스키마/엔진/런ID)를 생성."""
+    return {
+        "schema_version": LOG_SCHEMA_VERSION,
+        "kind": kind,
+        "engine": engine,
+        "run_id": str(uuid.uuid4()),
+    }
+
 
 # ============================
 # 공통 유틸 함수들
@@ -514,10 +531,14 @@ def auto_battle_experiment_menu(units: List[Unit]) -> None:
 
     if confirm_yes_no("이 결과를 JSONL로 저장할까요? (y/n): "):
         path = input("저장 경로(기본: logs/experiments.jsonl): ").strip() or "logs/experiments.jsonl"
-        append_jsonl(path, {"kind": "auto_experiment", "summary": summary})
+        record = {
+            **_new_log_envelope("auto_experiment", "simulate_duel" if mode == "1" else "simulate_duel_2d"),
+            "spec_source": "units_runtime",
+            "summary": summary,
+        }
+        append_jsonl(path, record)
+
         print(f"[저장 완료] {path}\n")
-
-
 
 def battle_scenarios_menu(units: List[Unit]) -> None:
     """battle_scenarios_*.md에 맞춘 '프리셋 시나리오' 실행 메뉴."""
@@ -681,12 +702,13 @@ def battle_scenarios_menu(units: List[Unit]) -> None:
     if confirm_yes_no("이 결과를 JSONL로 저장할까요? (y/n): "):
         path = input("저장 경로(기본: logs/scenarios.jsonl): ").strip() or "logs/scenarios.jsonl"
         record = {
-            "kind": "scenario_preset",
+            **_new_log_envelope("scenario_preset", "run_duel_trials_2d"),
             "scenario_title": scenario.get("title"),
             "scenario_source": scenario.get("_source"),
             "spec_source": "scenario_spec",
             "scenario_spec": scenario,
             "summary": summary,
         }
+
         append_jsonl(path, record)
         print(f"[저장 완료] {path}\n")
