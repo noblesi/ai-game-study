@@ -1,8 +1,8 @@
 # Scenario Summary Report
 
-- Generated at: 2025-12-17 23:10:44
+- Generated at: 2025-12-18 20:51:27
 - Input records: 3 (scenario_preset: 3)
-- Schema versions: legacy:3
+- Schema versions: v1:3
 
 ---
 
@@ -29,7 +29,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2025-12-16T22:32:23 | legacy | - | - | Knight | Goblin | 100 | 100.0% | 6.00 |
+| 2025-12-16T22:32:23 | v1 | run_duel_trials_2d | 54a57b13 | Knight | Goblin | 100 | 100.0% | 6.00 |
 
 **Unit snapshot (most recent)**
 
@@ -48,7 +48,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2025-12-16T22:46:45 | legacy | - | - | AntiAir Tower | Wyvern | 100 | 100.0% | 5.00 |
+| 2025-12-16T22:46:45 | v1 | run_duel_trials_2d | a4d2fb35 | AntiAir Tower | Wyvern | 100 | 100.0% | 5.00 |
 
 **Unit snapshot (most recent)**
 
@@ -67,7 +67,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2025-12-16T22:47:00 | legacy | - | - | Assassin | Giant | 100 | 0.0% | 3.33 |
+| 2025-12-16T22:47:00 | v1 | run_duel_trials_2d | 311513fb | Assassin | Giant | 100 | 0.0% | 3.33 |
 
 **Unit snapshot (most recent)**
 

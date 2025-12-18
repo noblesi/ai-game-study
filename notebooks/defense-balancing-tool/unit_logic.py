@@ -35,14 +35,15 @@ from scenario_loader import load_scenarios_from_markdown
 
 LOG_SCHEMA_VERSION = "v1"
 
-def _new_log_envelope(kind: str, engine: str) -> dict:
+def _new_log_envelope(kind: str, engine: str, run_id: str | None = None) -> dict:
     """JSONL 로그 레코드의 공통 메타(스키마/엔진/런ID)를 생성."""
     return {
         "schema_version": LOG_SCHEMA_VERSION,
         "kind": kind,
         "engine": engine,
-        "run_id": str(uuid.uuid4()),
+        "run_id": run_id or str(uuid.uuid4()),
     }
+
 
 
 # ============================
@@ -473,6 +474,8 @@ def auto_battle_experiment_menu(units: List[Unit]) -> None:
 
     verbose_each = confirm_yes_no("각 전투의 로그를 출력할까요? (y/n): ")
 
+    session_run_id = str(uuid.uuid4())  # 이 메뉴 실행(세션) 단위로 고정
+
     wins_attacker = 0
     wins_defender = 0
     draws = 0
@@ -532,7 +535,11 @@ def auto_battle_experiment_menu(units: List[Unit]) -> None:
     if confirm_yes_no("이 결과를 JSONL로 저장할까요? (y/n): "):
         path = input("저장 경로(기본: logs/experiments.jsonl): ").strip() or "logs/experiments.jsonl"
         record = {
-            **_new_log_envelope("auto_experiment", "simulate_duel" if mode == "1" else "simulate_duel_2d"),
+            **_new_log_envelope(
+                "auto_experiment",
+                "simulate_duel" if mode == "1" else "simulate_duel_2d",
+                run_id=session_run_id,
+            ),
             "spec_source": "units_runtime",
             "summary": summary,
         }
@@ -660,6 +667,7 @@ def battle_scenarios_menu(units: List[Unit]) -> None:
         return
 
     scenario = scenarios[idx]
+    session_run_id = str(uuid.uuid4())  # 이 시나리오 실행(세션) 단위로 고정
 
     # 시나리오 실행은 "시나리오 스펙"을 단일 소스(SSOT)로 사용한다.
     # units.json 스펙과 섞이면 결과 재현/비교가 어려워질 수 있다.
@@ -702,7 +710,7 @@ def battle_scenarios_menu(units: List[Unit]) -> None:
     if confirm_yes_no("이 결과를 JSONL로 저장할까요? (y/n): "):
         path = input("저장 경로(기본: logs/scenarios.jsonl): ").strip() or "logs/scenarios.jsonl"
         record = {
-            **_new_log_envelope("scenario_preset", "run_duel_trials_2d"),
+            **_new_log_envelope("scenario_preset", "run_duel_trials_2d", run_id=session_run_id),
             "scenario_title": scenario.get("title"),
             "scenario_source": scenario.get("_source"),
             "spec_source": "scenario_spec",
