@@ -73,6 +73,26 @@ def flatten_unit(u: Any, prefix: str) -> Dict[str, Any]:
         out[f"{prefix}{k}"] = u.get(k)
     return out
 
+def to_float(x: Any) -> float | None:
+    if x is None:
+        return None
+    if isinstance(x, (int, float)):
+        return float(x)
+    s = str(x).strip()
+    if not s:
+        return None
+    try:
+        return float(s)
+    except Exception:
+        return None
+
+def safe_div(num: float | None, den: float | None) -> float | None:
+    if num is None or den is None:
+        return None
+    if den == 0:
+        return None
+    return num / den
+
 
 def majority_winner(s: Dict[str, Any]) -> str:
     """trials 요약에서 다수결 승자 라벨."""
@@ -151,6 +171,36 @@ def export_csv(records: List[Dict[str, Any]], out_path: str, kinds: List[str], m
         row.update(flatten_unit(s.get("attacker_unit"), "a_"))
         row.update(flatten_unit(s.get("defender_unit"), "d_"))
 
+        # ===== derived features (DPS/TTK/Adv) =====
+        a_hp = to_float(row.get("a_hp"))
+        a_atk = to_float(row.get("a_atk"))
+        a_rng = to_float(row.get("a_range"))
+        a_as = to_float(row.get("a_attack_speed"))
+
+        d_hp = to_float(row.get("d_hp"))
+        d_atk = to_float(row.get("d_atk"))
+        d_rng = to_float(row.get("d_range"))
+        d_as = to_float(row.get("d_attack_speed"))
+
+        a_dps = (a_atk * a_as) if (a_atk is not None and a_as is not None) else None
+        d_dps = (d_atk * d_as) if (d_atk is not None and d_as is not None) else None
+
+        # TTK 추정: 상대 HP / 내 DPS
+        a_ttk_est = safe_div(d_hp, a_dps)  # attacker가 defender를 잡는 데 걸리는 시간(추정)
+        d_ttk_est = safe_div(a_hp, d_dps)  # defender가 attacker를 잡는 데 걸리는 시간(추정)
+
+        row["a_dps"] = a_dps
+        row["d_dps"] = d_dps
+        row["a_ttk_est"] = a_ttk_est
+        row["d_ttk_est"] = d_ttk_est
+
+        # advantage(차이 피처)
+        row["dps_adv"] = (a_dps - d_dps) if (a_dps is not None and d_dps is not None) else None
+        row["range_adv"] = (a_rng - d_rng) if (a_rng is not None and d_rng is not None) else None
+        # ttk_adv: (defender가 attacker를 잡는 시간) - (attacker가 defender를 잡는 시간)
+        # 값이 클수록 attacker가 유리(내가 상대를 더 빨리 잡거나, 상대가 나를 더 늦게 잡음)
+        row["ttk_adv"] = (d_ttk_est - a_ttk_est) if (d_ttk_est is not None and a_ttk_est is not None) else None
+
         # labels
         row["label_majority_winner"] = majority_winner(s)
         try:
@@ -172,6 +222,11 @@ def export_csv(records: List[Dict[str, Any]], out_path: str, kinds: List[str], m
         "attacker_pos", "defender_pos",
         *[f"a_{k}" for k in UNIT_KEYS],
         *[f"d_{k}" for k in UNIT_KEYS],
+
+        "a_dps", "d_dps",
+        "a_ttk_est", "d_ttk_est",
+        "dps_adv", "range_adv", "ttk_adv",
+
         "label_majority_winner", "label_attacker_better",
     ]
 
