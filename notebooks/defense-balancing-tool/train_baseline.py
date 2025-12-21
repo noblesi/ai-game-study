@@ -219,6 +219,122 @@ def fit_predict_tree(train, test, model: str, class_weight=None, seed: int = 0) 
     clf.fit(X_train, y_train)
     return list(map(int, clf.predict(X_test)))
 
+def fit_predict_proba_model(train, test, model_name: str, seed: int = 0):
+    """
+    model_name: "LR" | "LR_balanced" | "DT_balanced" | "RF_balanced_subsample"
+    return: probas for class=1 (List[float]) or None
+    """
+    try:
+        X_train = [x for x, _ in train]
+        y_train = [y for _, y in train]
+        X_test = [x for x, _ in test]
+    except Exception:
+        return None
+
+    # LR 계열
+    if model_name in ("LR", "LR_balanced"):
+        try:
+            from sklearn.linear_model import LogisticRegression
+            from sklearn.preprocessing import StandardScaler
+            from sklearn.pipeline import Pipeline
+        except Exception:
+            return None
+
+        cw = None if model_name == "LR" else "balanced"
+        clf = Pipeline([
+            ("scaler", StandardScaler()),
+            ("lr", LogisticRegression(max_iter=400, class_weight=cw)),
+        ])
+        clf.fit(X_train, y_train)
+        proba = clf.predict_proba(X_test)[:, 1]
+        return [float(p) for p in proba]
+
+    # Tree 계열
+    if model_name == "DT_balanced":
+        try:
+            from sklearn.tree import DecisionTreeClassifier
+        except Exception:
+            return None
+        clf = DecisionTreeClassifier(class_weight="balanced", random_state=seed)
+        clf.fit(X_train, y_train)
+        proba = clf.predict_proba(X_test)[:, 1]
+        return [float(p) for p in proba]
+
+    if model_name == "RF_balanced_subsample":
+        try:
+            from sklearn.ensemble import RandomForestClassifier
+        except Exception:
+            return None
+        clf = RandomForestClassifier(
+            n_estimators=200,
+            class_weight="balanced_subsample",
+            random_state=seed,
+            n_jobs=-1,
+        )
+        clf.fit(X_train, y_train)
+        proba = clf.predict_proba(X_test)[:, 1]
+        return [float(p) for p in proba]
+
+    return None
+
+
+def threshold_sweep_across_splits(
+    *,
+    model_name: str,
+    data: List[Tuple[List[float], int]],
+    split_mode: str,
+    split_plan,
+    K: int,
+    seed_base: int,
+    test_ratio: float,
+    thr_step: float,
+):
+    """
+    모든 split을 돌면서 threshold별 confusion matrix를 누적한 뒤
+    f1_1이 최대가 되는 threshold를 선택.
+    """
+    thresholds = []
+    t = thr_step
+    while t < 1.0:
+        thresholds.append(round(t, 4))
+        t += thr_step
+    if 0.5 not in thresholds:
+        thresholds.append(0.5)
+        thresholds.sort()
+
+    cm_by_thr = {thr: [[0, 0], [0, 0]] for thr in thresholds}
+
+    for i in range(K):
+        split_seed = seed_base + i
+
+        if split_mode == "group" and split_plan is not None:
+            train_idx, test_idx = split_plan[i]
+            train = [data[j] for j in train_idx]
+            test = [data[j] for j in test_idx]
+        else:
+            train, test = split_xy(data, test_ratio=test_ratio, seed=split_seed)
+
+        y_test = [y for _, y in test]
+        prob = fit_predict_proba_model(train, test, model_name=model_name, seed=split_seed)
+        if prob is None:
+            return None
+
+        for thr in thresholds:
+            y_pred = [1 if p >= thr else 0 for p in prob]
+            cm = _cm_from_preds(y_test, y_pred)
+            cm_by_thr[thr] = _cm_add(cm_by_thr[thr], cm)
+
+    # threshold별 지표 계산
+    scored = []
+    for thr, cm_sum in cm_by_thr.items():
+        m = _metrics_from_cm(cm_sum)
+        scored.append((thr, m, cm_sum))
+
+    # F1_1 최대
+    scored.sort(key=lambda x: x[1]["f1_1"], reverse=True)
+    return scored  # [(thr, metrics, cm_sum), ...]
+
+
 
 def write_report_md(
     path: str,
@@ -453,14 +569,36 @@ def main() -> None:
     p.add_argument("--test-ratio", type=float, default=0.2)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--report", default="", help="md 리포트 저장 경로(비우면 reports/baseline_eval_YYYYMMDD.md)")
+    p.add_argument("--group", action="store_true", help="GroupShuffleSplit로 (attacker,defender) 조합 단위 분할")
+    p.add_argument("--group-key", default="pair_key", help="그룹 분할에 사용할 CSV 컬럼명 (default: pair_key)")
+    p.add_argument("--group-stratified", action="store_true", 
+                   help="그룹 단위로 split하되(조합 분리), 그룹 라벨(다수결) 기준으로 stratified sampling 적용")
+    p.add_argument("--tune-threshold", action="store_true", help="best 모델에 대해 threshold sweep으로 F1_1 최대 threshold 찾기")
+    p.add_argument("--thr-step", type=float, default=0.05, help="threshold sweep step (default=0.05)")
+
     args = p.parse_args()
 
     rows = load_csv(args.input)
     data: List[Tuple[List[float], int]] = []
-    for row in rows:
+    groups: List[str] = []
+    for idx, row in enumerate(rows):
         item = build_features(row)
-        if item is not None:
-            data.append(item)
+        if item is None:
+            continue
+
+        # group key 수집(없으면 a_name/d_name으로 fallback)
+        g = row.get(args.group_key)
+        if not isinstance(g, str) or not g.strip():
+            a = row.get("a_name")
+            d = row.get("d_name")
+            if isinstance(a, str) and isinstance(d, str) and a.strip() and d.strip():
+                g = f"{a.strip()}__vs__{d.strip()}"
+            else:
+                # 마지막 fallback: 행 단위(그룹 분할 의미는 약해지지만 크래시 방지)
+                g = f"row_{idx}"
+
+        data.append(item)
+        groups.append(g)
 
     print(f"[INFO] input rows: {len(rows)}")
     print(f"[INFO] usable rows: {len(data)}")
@@ -511,12 +649,84 @@ def main() -> None:
         results[name]["f1_1"].append(m["f1_1"])
         results[name]["cm_sum"] = _cm_add(results[name]["cm_sum"], cm)
 
+    # ===== split 계획 수립 =====
+    split_mode = "random"
+    n_groups = 0
+    split_plan = None
+
+    if args.group:
+        try:
+            from sklearn.model_selection import GroupShuffleSplit
+        except Exception:
+            print("[WARN] sklearn not available. fallback to random split.")
+            args.group = False
+        else:
+            split_mode = "group"
+            n_groups = len(set(groups))
+            print(f"[INFO] split mode: GROUP key={args.group_key} groups={n_groups}")
+
+            X_all = [x for x, _ in data]
+            y_all = [y for _, y in data]
+
+            if args.group_stratified:
+                # ---- 그룹 단위 + 라벨 비율 완화(그룹 라벨 다수결로 stratify) ----
+                from sklearn.model_selection import StratifiedShuffleSplit
+
+                # group -> indices
+                group_to_indices: Dict[str, List[int]] = {}
+                for idx, g in enumerate(groups):
+                    group_to_indices.setdefault(g, []).append(idx)
+
+                uniq_groups = list(group_to_indices.keys())
+
+                # 그룹 라벨: 그룹 내 y 다수결(동률이면 1)
+                group_labels: List[int] = []
+                for g in uniq_groups:
+                    ys_g = [y_all[i] for i in group_to_indices[g]]
+                    ones = sum(ys_g)
+                    zeros = len(ys_g) - ones
+                    group_labels.append(1 if ones >= zeros else 0)
+
+                sss = StratifiedShuffleSplit(
+                    n_splits=K, test_size=args.test_ratio, random_state=args.seed
+                )
+
+                split_plan = []
+                for train_g_idx, test_g_idx in sss.split(uniq_groups, group_labels):
+                    train_groups = [uniq_groups[i] for i in train_g_idx]
+                    test_groups = [uniq_groups[i] for i in test_g_idx]
+
+                    train_idx = [i for g in train_groups for i in group_to_indices[g]]
+                    test_idx = [i for g in test_groups for i in group_to_indices[g]]
+                    split_plan.append((train_idx, test_idx))
+
+                print("[INFO] group-stratified: enabled")
+            else:
+                gss = GroupShuffleSplit(n_splits=K, test_size=args.test_ratio, random_state=args.seed)
+                split_plan = list(gss.split(X_all, y_all, groups))
+
+
+    if split_mode == "random":
+        print(f"[INFO] split mode: RANDOM seed_base={args.seed} test_ratio={args.test_ratio}")
+
+    test_pos_rates: List[float] = []
+
     for i in range(K):
         split_seed = args.seed + i
-        train, test = split_xy(data, test_ratio=args.test_ratio, seed=split_seed)
+
+        if split_mode == "group" and split_plan is not None:
+            train_idx, test_idx = split_plan[i]
+            train = [data[j] for j in train_idx]
+            test = [data[j] for j in test_idx]
+        else:
+            train, test = split_xy(data, test_ratio=args.test_ratio, seed=split_seed)
 
         X_test = [x for x, _ in test]
         y_test = [y for _, y in test]
+
+        # test 라벨(1) 비율 기록(분포 흔들림 체크)
+        if len(y_test) > 0:
+            test_pos_rates.append(sum(y_test) / len(y_test))
 
         # ---- MAJORITY baseline (훈련셋 기준) ----
         y_train = [y for _, y in train]
@@ -549,6 +759,12 @@ def main() -> None:
             results["RF_balanced_subsample"]["available"] = False
         else:
             _record("RF_balanced_subsample", y_test, pred)
+
+    if test_pos_rates:
+        s = _summ(test_pos_rates)
+        print("[INFO] test_pos_rate (label=1) / SPLIT")
+        print(f"- mean={_fmt3(s['mean'])} min={_fmt3(s['min'])} max={_fmt3(s['max'])}")
+        print()
 
     # ---- 요약 출력 ----
     packed: Dict[str, Dict[str, Any]] = {}
@@ -603,6 +819,31 @@ def main() -> None:
         else:
             print("[INFO] feature ranking unavailable.")
 
+    # ===== Threshold 튜닝(확률 기반) =====
+    tuned = None
+    if args.tune_threshold and best:
+        # predict_proba 지원 모델만
+        if best in ("LR", "LR_balanced", "DT_balanced", "RF_balanced_subsample"):
+            tuned = threshold_sweep_across_splits(
+                model_name=best,
+                data=data,
+                split_mode=split_mode,
+                split_plan=split_plan,
+                K=K,
+                seed_base=args.seed,
+                test_ratio=args.test_ratio,
+                thr_step=args.thr_step,
+            )
+            if tuned is None:
+                print("[WARN] threshold tuning skipped (predict_proba not available).")
+            else:
+                thr, m, cm = tuned[0]
+                print(f"[BEST THRESHOLD] model={best} thr={thr:.2f} f1_1={m['f1_1']:.4f} "
+                      f"recall_1={m['recall_1']:.4f} prec_1={m['precision_1']:.4f} bal_acc={m['bal_acc']:.4f}")
+                print(f"- cm_sum {_fmt_cm(cm)}")
+        else:
+            print("[INFO] threshold tuning not supported for this best model.")
+
 
     # ---- 리포트 저장 ----
     report_path = args.report.strip() or _default_report_path()
@@ -621,6 +862,13 @@ def main() -> None:
     # 리포트에 best/top-features append
     try:
         with open(report_path, "a", encoding="utf-8") as f:
+            f.write("\n## Split Mode\n\n")
+            f.write(f"- mode: {split_mode}\n")
+            if split_mode == "group":
+                f.write(f"- group_key: {args.group_key}\n")
+                f.write(f"- n_groups: {n_groups}\n")
+            f.write("\n")
+
             f.write("\n## Best Model\n\n")
             if best:
                 f.write(f"- metric: f1_1(mean)\n")
@@ -637,6 +885,25 @@ def main() -> None:
                     f.write(f"| {i} | {fname} | {score:.6f} |\n")
             else:
                 f.write("- (unavailable)\n")
+
+            f.write("\n## Threshold Tuning\n\n")
+            if tuned:
+                thr, m, cm = tuned[0]
+                f.write(f"- model: {best}\n")
+                f.write(f"- best_threshold: {thr:.2f}\n")
+                f.write(f"- f1_1: {m['f1_1']:.4f}\n")
+                f.write(f"- recall_1: {m['recall_1']:.4f}\n")
+                f.write(f"- precision_1: {m['precision_1']:.4f}\n")
+                f.write(f"- bal_acc: {m['bal_acc']:.4f}\n")
+                f.write(f"- cm_sum: {_fmt_cm(cm)}\n\n")
+
+                f.write("Top 5 thresholds by f1_1:\n\n")
+                f.write("| rank | thr | f1_1 | recall_1 | precision_1 | bal_acc |\n|---:|---:|---:|---:|---:|---:|\n")
+                for i, (t, mm, _) in enumerate(tuned[:5], start=1):
+                    f.write(f"| {i} | {t:.2f} | {mm['f1_1']:.4f} | {mm['recall_1']:.4f} | {mm['precision_1']:.4f} | {mm['bal_acc']:.4f} |\n")
+            else:
+                f.write("- (not run)\n")
+                
         print("[OK] appended best/top-features to report.")
     except Exception as e:
         print(f"[WARN] failed to append report: {e}")

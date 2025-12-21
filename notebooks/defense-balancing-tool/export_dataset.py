@@ -171,6 +171,15 @@ def export_csv(records: List[Dict[str, Any]], out_path: str, kinds: List[str], m
         row.update(flatten_unit(s.get("attacker_unit"), "a_"))
         row.update(flatten_unit(s.get("defender_unit"), "d_"))
 
+        # ===== group key (for Group Split) =====
+        # a_name / d_name 컬럼은 flatten_unit(UNIT_KEYS에 name 포함)로 이미 생성됨
+        a_name = row.get("a_name")
+        d_name = row.get("d_name")
+        if isinstance(a_name, str) and isinstance(d_name, str) and a_name.strip() and d_name.strip():
+            row["pair_key"] = f"{a_name.strip()}__vs__{d_name.strip()}"
+        else:
+            row["pair_key"] = None
+
         # ===== derived features (DPS/TTK/Adv) =====
         a_hp = to_float(row.get("a_hp"))
         a_atk = to_float(row.get("a_atk"))
@@ -217,6 +226,7 @@ def export_csv(records: List[Dict[str, Any]], out_path: str, kinds: List[str], m
     fieldnames = [
         "logged_at", "schema_version", "kind", "engine", "run_id", "run_id_short", "spec_source",
         "scenario_title", "scenario_source",
+        "pair_key",
         "trials", "wins_attacker", "wins_defender", "draws", "no_result",
         "attacker_win_rate", "defender_win_rate", "draw_rate", "no_result_rate", "avg_time",
         "attacker_pos", "defender_pos",
