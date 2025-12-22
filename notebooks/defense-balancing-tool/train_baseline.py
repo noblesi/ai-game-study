@@ -334,6 +334,241 @@ def threshold_sweep_across_splits(
     scored.sort(key=lambda x: x[1]["f1_1"], reverse=True)
     return scored  # [(thr, metrics, cm_sum), ...]
 
+def _parse_int_list_csv(s: str) -> List[int]:
+    parts = [p.strip() for p in str(s).split(",") if p.strip()]
+    out: List[int] = []
+    for p in parts:
+        out.append(int(p))
+    return out
+
+
+def _parse_max_depth_list_csv(s: str) -> List[int | None]:
+    parts = [p.strip() for p in str(s).split(",") if p.strip()]
+    out: List[int | None] = []
+    for p in parts:
+        if p.lower() == "none":
+            out.append(None)
+        else:
+            out.append(int(p))
+    return out
+
+
+def fit_predict_proba_rf(
+    train: List[Tuple[List[float], int]],
+    test: List[Tuple[List[float], int]],
+    *,
+    seed: int,
+    n_estimators: int,
+    max_depth: int | None,
+    min_samples_leaf: int,
+    class_weight: str = "balanced_subsample",
+) -> List[float] | None:
+    try:
+        from sklearn.ensemble import RandomForestClassifier
+    except Exception:
+        return None
+
+    X_train = [x for x, _ in train]
+    y_train = [y for _, y in train]
+    X_test = [x for x, _ in test]
+
+    clf = RandomForestClassifier(
+        n_estimators=n_estimators,
+        max_depth=max_depth,
+        min_samples_leaf=min_samples_leaf,
+        class_weight=class_weight,
+        random_state=seed,
+        n_jobs=-1,
+    )
+    clf.fit(X_train, y_train)
+    proba = clf.predict_proba(X_test)[:, 1]
+    return [float(p) for p in proba]
+
+
+def rf_threshold_sweep_across_splits(
+    *,
+    data: List[Tuple[List[float], int]],
+    split_mode: str,
+    split_plan,
+    K: int,
+    seed_base: int,
+    test_ratio: float,
+    thr_step: float,
+    n_estimators: int,
+    max_depth: int | None,
+    min_samples_leaf: int,
+    class_weight: str = "balanced_subsample",
+):
+    """
+    RF에 대해 split별로 predict_proba를 얻고, threshold sweep을 수행해
+    f1_1이 최대가 되는 threshold를 반환한다.
+    return: scored list [(thr, metrics, cm_sum), ...] or None
+    """
+    thresholds = []
+    t = thr_step
+    while t < 1.0:
+        thresholds.append(round(t, 4))
+        t += thr_step
+    if 0.5 not in thresholds:
+        thresholds.append(0.5)
+        thresholds.sort()
+
+    cm_by_thr = {thr: [[0, 0], [0, 0]] for thr in thresholds}
+
+    for i in range(K):
+        split_seed = seed_base + i
+
+        if split_mode == "group" and split_plan is not None:
+            train_idx, test_idx = split_plan[i]
+            train = [data[j] for j in train_idx]
+            test = [data[j] for j in test_idx]
+        else:
+            train, test = split_xy(data, test_ratio=test_ratio, seed=split_seed)
+
+        y_test = [y for _, y in test]
+        prob = fit_predict_proba_rf(
+            train,
+            test,
+            seed=split_seed,
+            n_estimators=n_estimators,
+            max_depth=max_depth,
+            min_samples_leaf=min_samples_leaf,
+            class_weight=class_weight,
+        )
+        if prob is None:
+            return None
+
+        for thr in thresholds:
+            y_pred = [1 if p >= thr else 0 for p in prob]
+            cm = _cm_from_preds(y_test, y_pred)
+            cm_by_thr[thr] = _cm_add(cm_by_thr[thr], cm)
+
+    scored = []
+    for thr, cm_sum in cm_by_thr.items():
+        m = _metrics_from_cm(cm_sum)
+        scored.append((thr, m, cm_sum))
+
+    scored.sort(key=lambda x: x[1]["f1_1"], reverse=True)
+    return scored
+
+
+def rf_grid_search_best_by_f1(
+    *,
+    data: List[Tuple[List[float], int]],
+    split_mode: str,
+    split_plan,
+    K: int,
+    seed_base: int,
+    test_ratio: float,
+    thr_step: float,
+    n_estimators: int,
+    depths: List[int | None],
+    min_leaves: List[int],
+    class_weight: str = "balanced_subsample",
+):
+    """
+    RF (max_depth, min_samples_leaf) 미니 그리드를 돌리고,
+    각 설정에 대해 threshold sweep(F1 최대)을 수행한 뒤
+    가장 좋은 설정을 반환한다.
+    return:
+      - best_params: dict or None
+      - best_tuned: scored list or None
+      - rows: list of dict (전체 결과, f1_1 desc 정렬)
+    """
+    rows: List[Dict[str, Any]] = []
+    best_params: Dict[str, Any] | None = None
+    best_tuned = None
+    best_score = -1.0
+
+    for d in depths:
+        for leaf in min_leaves:
+            tuned = rf_threshold_sweep_across_splits(
+                data=data,
+                split_mode=split_mode,
+                split_plan=split_plan,
+                K=K,
+                seed_base=seed_base,
+                test_ratio=test_ratio,
+                thr_step=thr_step,
+                n_estimators=n_estimators,
+                max_depth=d,
+                min_samples_leaf=leaf,
+                class_weight=class_weight,
+            )
+            if tuned is None or not tuned:
+                continue
+
+            thr, m, cm = tuned[0]
+            row = {
+                "n_estimators": n_estimators,
+                "max_depth": d,
+                "min_samples_leaf": leaf,
+                "thr": thr,
+                "acc": m["acc"],
+                "bal_acc": m["bal_acc"],
+                "f1_1": m["f1_1"],
+                "recall_1": m["recall_1"],
+                "precision_1": m["precision_1"],
+                "cm_sum": cm,
+            }
+            rows.append(row)
+
+            if m["f1_1"] > best_score:
+                best_score = m["f1_1"]
+                best_params = {
+                    "n_estimators": n_estimators,
+                    "max_depth": d,
+                    "min_samples_leaf": leaf,
+                    "class_weight": class_weight,
+                }
+                best_tuned = tuned
+
+    rows.sort(key=lambda r: r["f1_1"], reverse=True)
+    return best_params, best_tuned, rows
+
+
+def fit_full_rf_and_rank_features(
+    X: List[List[float]],
+    y: List[int],
+    feature_names: List[str],
+    *,
+    seed: int,
+    rf_params: Dict[str, Any],
+) -> Tuple[str, List[Tuple[str, float]]]:
+    """RF를 전체 데이터로 재학습 후 feature_importances_로 랭킹."""
+    try:
+        from sklearn.ensemble import RandomForestClassifier
+    except Exception:
+        return "unsupported", []
+
+    if not X or not feature_names:
+        return "unsupported", []
+    if len(X[0]) != len(feature_names):
+        m = min(len(X[0]), len(feature_names))
+        feature_names = feature_names[:m]
+        X = [row[:m] for row in X]
+
+    clf = RandomForestClassifier(
+        n_estimators=int(rf_params.get("n_estimators", 200)),
+        max_depth=rf_params.get("max_depth", None),
+        min_samples_leaf=int(rf_params.get("min_samples_leaf", 1)),
+        class_weight=rf_params.get("class_weight", "balanced_subsample"),
+        random_state=seed,
+        n_jobs=-1,
+    )
+    clf.fit(X, y)
+    importances = getattr(clf, "feature_importances_", None)
+    if importances is None:
+        return "unsupported", []
+
+    ranked = sorted(
+        [(feature_names[i], float(importances[i])) for i in range(len(feature_names))],
+        key=lambda t: t[1],
+        reverse=True,
+    )
+    return "tree_importance", ranked
+
+
 
 
 def write_report_md(
@@ -576,6 +811,18 @@ def main() -> None:
     p.add_argument("--tune-threshold", action="store_true", help="best 모델에 대해 threshold sweep으로 F1_1 최대 threshold 찾기")
     p.add_argument("--thr-step", type=float, default=0.05, help="threshold sweep step (default=0.05)")
 
+    p.add_argument("--rf-grid", action="store_true",
+                   help="RF 미니 그리드 탐색(max_depth/min_samples_leaf) + threshold 재튜닝(=F1 최대)")
+    p.add_argument("--rf-depths", default="None,8,12",
+                   help="RF max_depth 후보(콤마). 예: None,8,12")
+    p.add_argument("--rf-min-leaves", default="1,2,4",
+                   help="RF min_samples_leaf 후보(콤마). 예: 1,2,4")
+    p.add_argument("--rf-estimators", type=int, default=200,
+                   help="RF n_estimators (default=200)")
+    p.add_argument("--rf-topn", type=int, default=8,
+                   help="리포트에 남길 RF grid 상위 N개 (default=8)")
+
+
     args = p.parse_args()
 
     rows = load_csv(args.input)
@@ -792,6 +1039,9 @@ def main() -> None:
         print(f"- cm_sum   {_fmt_cm(pck['cm_sum'])}")
         print()
 
+    kind = "unsupported"
+    ranked: List[Tuple[str, float]] = []
+
     # ===== best 모델 선택(F1_1 기준) =====
     best = pick_best_model(packed, metric_key="f1_1")
     if not best:
@@ -844,6 +1094,76 @@ def main() -> None:
         else:
             print("[INFO] threshold tuning not supported for this best model.")
 
+
+
+    # ===== RF 미니 그리드 탐색 + threshold 재튜닝(선택) =====
+    rf_grid_params: Dict[str, Any] | None = None
+    rf_grid_best_row: Dict[str, Any] | None = None
+    rf_grid_rows: List[Dict[str, Any]] | None = None
+
+    if args.rf_grid:
+        try:
+            depths = _parse_max_depth_list_csv(args.rf_depths)
+            leaves = _parse_int_list_csv(args.rf_min_leaves)
+        except Exception as e:
+            print(f"[WARN] rf-grid parse failed: {e}")
+        else:
+            rf_grid_params, rf_grid_best_tuned, rf_grid_rows = rf_grid_search_best_by_f1(
+                data=data,
+                split_mode=split_mode,
+                split_plan=split_plan,
+                K=K,
+                seed_base=args.seed,
+                test_ratio=args.test_ratio,
+                thr_step=args.thr_step,
+                n_estimators=args.rf_estimators,
+                depths=depths,
+                min_leaves=leaves,
+                class_weight="balanced_subsample",
+            )
+
+            if rf_grid_rows:
+                rf_grid_best_row = rf_grid_rows[0]
+                print("[RF GRID]")
+                print(f"- tried: {len(rf_grid_rows)} configs")
+                print(f"- best_params: n_estimators={rf_grid_best_row['n_estimators']} "
+                      f"max_depth={rf_grid_best_row['max_depth']} "
+                      f"min_samples_leaf={rf_grid_best_row['min_samples_leaf']}")
+                print(f"- best_threshold: {rf_grid_best_row['thr']:.2f} "
+                      f"f1_1={rf_grid_best_row['f1_1']:.4f} "
+                      f"recall_1={rf_grid_best_row['recall_1']:.4f} "
+                      f"prec_1={rf_grid_best_row['precision_1']:.4f} "
+                      f"bal_acc={rf_grid_best_row['bal_acc']:.4f}")
+                print(f"- cm_sum {_fmt_cm(rf_grid_best_row['cm_sum'])}")
+
+                # 기존 기준(best/tuned) 대비 개선되면 best/tuned/feature ranking을 갱신
+                ref_f1 = -1.0
+                if tuned and isinstance(tuned, list) and tuned:
+                    ref_f1 = float(tuned[0][1].get("f1_1", -1.0))
+                elif best and best in packed:
+                    ref_f1 = float(packed[best]["f1_1"]["mean"])
+
+                if rf_grid_best_row["f1_1"] > ref_f1:
+                    best = "RF_balanced_subsample"
+                    tuned = rf_grid_best_tuned  # threshold ranking (Top5 출력/리포트용)
+
+                    # 전체 데이터로 RF(선택된 파라미터) 재학습 후 feature 랭킹 갱신
+                    X_all2 = [x for x, _ in data]
+                    y_all2 = [yy for _, yy in data]
+                    if rf_grid_params:
+                        kind, ranked = fit_full_rf_and_rank_features(
+                            X_all2,
+                            y_all2,
+                            FEATURE_NAMES,
+                            seed=args.seed,
+                            rf_params=rf_grid_params,
+                        )
+                        if ranked:
+                            print(f"[TOP FEATURES] (tree_importance) top 12 (RF tuned)")
+                            for name, score in ranked[:12]:
+                                print(f"- {name}: {score:.6f}")
+            else:
+                print("[WARN] RF grid search produced no results (sklearn missing?).")
 
     # ---- 리포트 저장 ----
     report_path = args.report.strip() or _default_report_path()
@@ -903,6 +1223,41 @@ def main() -> None:
                     f.write(f"| {i} | {t:.2f} | {mm['f1_1']:.4f} | {mm['recall_1']:.4f} | {mm['precision_1']:.4f} | {mm['bal_acc']:.4f} |\n")
             else:
                 f.write("- (not run)\n")
+
+            f.write("\n## RF Grid Search\n\n")
+            if rf_grid_rows:
+                f.write(f"- tried_configs: {len(rf_grid_rows)}\n")
+                if rf_grid_params:
+                    f.write(
+                        f"- best_params: n_estimators={rf_grid_params.get('n_estimators')} "
+                        f"max_depth={rf_grid_params.get('max_depth')} "
+                        f"min_samples_leaf={rf_grid_params.get('min_samples_leaf')} "
+                        f"class_weight={rf_grid_params.get('class_weight')}\n"
+                    )
+                if rf_grid_best_row:
+                    f.write(
+                        f"- best_threshold: {rf_grid_best_row['thr']:.2f} "
+                        f"f1_1={rf_grid_best_row['f1_1']:.4f} "
+                        f"recall_1={rf_grid_best_row['recall_1']:.4f} "
+                        f"precision_1={rf_grid_best_row['precision_1']:.4f} "
+                        f"bal_acc={rf_grid_best_row['bal_acc']:.4f} "
+                        f"acc={rf_grid_best_row['acc']:.4f}\n"
+                    )
+                    f.write(f"- cm_sum: {_fmt_cm(rf_grid_best_row['cm_sum'])}\n\n")
+
+                f.write("| rank | max_depth | min_samples_leaf | thr | f1_1 | recall_1 | precision_1 | bal_acc | acc |\n")
+                f.write("|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
+                topn = max(1, int(args.rf_topn))
+                for i, row in enumerate(rf_grid_rows[:topn], start=1):
+                    md = "None" if row["max_depth"] is None else str(row["max_depth"])
+                    f.write(
+                        f"| {i} | {md} | {row['min_samples_leaf']} | {row['thr']:.2f} | "
+                        f"{row['f1_1']:.4f} | {row['recall_1']:.4f} | {row['precision_1']:.4f} | "
+                        f"{row['bal_acc']:.4f} | {row['acc']:.4f} |\n"
+                    )
+            else:
+                f.write("- (not run)\n")
+
                 
         print("[OK] appended best/top-features to report.")
     except Exception as e:
