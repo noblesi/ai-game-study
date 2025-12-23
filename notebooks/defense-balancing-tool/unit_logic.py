@@ -25,6 +25,7 @@ from battle_sim import (
     find_unit_by_name_fuzzy,
     make_unit_from_spec,
     run_duel_trials_2d,
+    run_swarm_trials_2d,
 )
 
 from scenario_loader import load_scenarios_from_markdown
@@ -34,6 +35,97 @@ from scenario_loader import load_scenarios_from_markdown
 # ============================
 
 LOG_SCHEMA_VERSION = "v1"
+
+# ============================
+# 레벨/Perk 룰 (초기 버전)
+# ============================
+
+MAX_LEVEL = 10
+PERK_LEVELS = (3, 6, 10)
+
+# Perk 카탈로그(SSOT)
+# - id: 저장값(데이터셋/로그에도 그대로 들어감)
+# - tags: "duel"/"swarm"/"all" (전투 타입에 따라 적용)
+PERK_CATALOG = {
+    "shield": {
+        "name": "Shield",
+        "tags": ["all"],
+        "desc": "최대 HP +20%",
+    },
+    "duelist": {
+        "name": "Duelist",
+        "tags": ["duel"],
+        "desc": "1v1에서 ATK +10%, 공격속도 +10%",
+    },
+    "cleave": {
+        "name": "Cleave",
+        "tags": ["swarm"],
+        "desc": "1vN에서 공격 시 추가 1명에게 50% 스플래시",
+    },
+    "execute": {
+        "name": "Execute",
+        "tags": ["all"],
+        "desc": "대상이 HP 30% 이하일 때 피해 +50%",
+    },
+    "lifesteal": {
+        "name": "Lifesteal",
+        "tags": ["all"],
+        "desc": "가한 피해의 20%를 회복(최대 HP까지)",
+    },
+    "rapid": {
+        "name": "Rapid",
+        "tags": ["all"],
+        "desc": "공격속도 +20%",
+    },
+}
+
+
+def _format_perks(perks: List[str]) -> str:
+    if not perks:
+        return "-"
+    # 저장값(id)을 그대로 노출하되, 이름도 같이 보여주면 UX가 좋음
+    pretty = []
+    for pid in perks:
+        meta = PERK_CATALOG.get(pid)
+        if meta:
+            pretty.append(f"{pid}({meta['name']})")
+        else:
+            pretty.append(pid)
+    return ", ".join(pretty)
+
+
+def _select_perk_for_unit(unit: Unit) -> None:
+    """현재 유닛에 perk 1개를 선택해서 추가한다.
+
+    - 최대 3개
+    - 중복 불가
+    - 선택 취소 가능
+    """
+
+    if len(unit.perks) >= 3:
+        print("[알림] 이미 perk을 3개 모두 보유 중입니다.")
+        return
+
+    available = [pid for pid in PERK_CATALOG.keys() if pid not in unit.perks]
+    if not available:
+        print("[알림] 선택 가능한 perk이 없습니다.")
+        return
+
+    def _render(pid: str, idx_1based: int) -> None:
+        meta = PERK_CATALOG.get(pid, {})
+        name = meta.get("name", "?")
+        tags = "/".join(meta.get("tags", []) or [])
+        desc = meta.get("desc", "")
+        print(f"{idx_1based}) {pid} | {name} | [{tags}] - {desc}")
+
+    sel = select_from_list(available, title=f"perk 선택 (현재: {_format_perks(unit.perks)})", render_item=_render)
+    if sel is None:
+        return
+
+    picked = available[sel]
+    unit.perks.append(picked)
+    meta = PERK_CATALOG.get(picked, {})
+    print(f"[OK] perk 획득: {picked} ({meta.get('name', '?')})")
 
 def _new_log_envelope(kind: str, engine: str, run_id: str | None = None) -> dict:
     """JSONL 로그 레코드의 공통 메타(스키마/엔진/런ID)를 생성."""
@@ -78,6 +170,7 @@ def format_unit_brief(unit: Unit) -> str:
         f"(Lv.{unit.level} / HP:{unit.hp} / ATK:{unit.atk} / "
         f"Role:{unit.role} / Type:{unit.attack_type} / "
         f"Cost:{unit.cost} / Range:{unit.range})"
+        f" / Perks:{_format_perks(unit.perks)}"
     )
 
 
@@ -87,6 +180,7 @@ def print_unit_detail(unit: Unit) -> None:
     print(f"이름        : {unit.name}")
     print(f"역할(Role) : {unit.role}")
     print(f"레벨       : {unit.level}")
+    print(f"Perks      : {_format_perks(unit.perks)}")
     print(f"HP         : {unit.hp}")
     print(f"ATK        : {unit.atk}")
     print(f"코스트      : {unit.cost}")
@@ -95,6 +189,7 @@ def print_unit_detail(unit: Unit) -> None:
     print(f"이동 속도   : {unit.move_speed}")
     print(f"타겟 타입   : {unit.target_type}")
     print(f"공격 타입   : {unit.attack_type}\n")
+    print(f"Perks       : {_format_perks(unit.perks)}\n")
 
 
 # ============================
@@ -238,8 +333,20 @@ def level_up_unit_menu(units: List[Unit]) -> None:
         return
 
     unit = units[idx]
-    unit.level_up()
-    print(f"\n{unit.name}이(가) 레벨업! (Lv.{unit.level}, HP:{unit.hp}, ATK:{unit.atk})\n")
+    before = unit.level
+    ok = unit.level_up(max_level=MAX_LEVEL)
+    if not ok:
+        print(f"\n[알림] {unit.name}은(는) 이미 최대 레벨(Lv.{MAX_LEVEL})입니다.\n")
+        return
+
+    print(f"\n{unit.name}이(가) 레벨업! (Lv.{unit.level}, HP:{unit.hp}, ATK:{unit.atk})")
+
+    # 3/6/10레벨 perk 선택
+    if unit.level in PERK_LEVELS:
+        print(f"[Perk] Lv.{unit.level} 도달! perk을 1개 선택할 수 있습니다.")
+        _select_perk_for_unit(unit)
+
+    print()
 
 
 def remove_unit_menu(units: List[Unit]) -> None:
@@ -548,175 +655,233 @@ def auto_battle_experiment_menu(units: List[Unit]) -> None:
         print(f"[저장 완료] {path}\n")
 
 def battle_scenarios_menu(units: List[Unit]) -> None:
-    """battle_scenarios_*.md에 맞춘 '프리셋 시나리오' 실행 메뉴."""
-    md_scenarios = load_scenarios_from_markdown()
-    if md_scenarios:
-        scenarios = md_scenarios
-    else:
-        scenarios = [
-        {
-            "title": "Knight vs Goblin (근접 기본 밸런스)",
-            "attacker_spec": {
-                "name": "Knight",
-                "level": 1,
-                "hp": 200,
-                "atk": 25,
-                "role": "defender",
-                "range": 1,
-                "attack_speed": 1.0,
-                "move_speed": 1.0,
-                "target_type": "ground",
-                "attack_type": "melee",
-            },
-            "defender_spec": {
-                "name": "Goblin",
-                "level": 1,
-                "hp": 100,
-                "atk": 15,
-                "role": "ground",
-                "range": 1,
-                "attack_speed": 1.2,
-                "move_speed": 1.2,
-                "target_type": "ground",
-                "attack_type": "melee",
-            },
-            "trials": 100,
-            "attacker_pos": (0.0, 0.0),
-            "defender_pos": (5.0, 0.0),
-            "verbose_each": False,
-        },
-        {
-            "title": "AntiAirTower vs Wyvern (대공 타워 검증)",
-            "attacker_spec": {
-                "name": "AntiAirTower",
-                "level": 1,
-                "hp": 150,
-                "atk": 40,
-                "role": "tower",
-                "range": 4,
-                "attack_speed": 0.8,
-                "move_speed": 0.0,
-                "target_type": "air",
-                "attack_type": "ranged",
-            },
-            "defender_spec": {
-                "name": "Wyvern",
-                "level": 1,
-                "hp": 180,
-                "atk": 30,
-                "role": "air_enemy",
-                "range": 1,
-                "attack_speed": 1.0,
-                "move_speed": 1.5,
-                "target_type": "tower",
-                "attack_type": "melee",
-            },
-            "trials": 100,
-            "attacker_pos": (0.0, 0.0),
-            "defender_pos": (6.0, 0.0),
-            "verbose_each": False,
-        },
-        {
-            "title": "Assassin vs Giant (속도/공속 상성 테스트)",
-            "attacker_spec": {
-                "name": "Assassin",
-                "level": 1,
-                "hp": 80,
-                "atk": 35,
-                "role": "ground",
-                "range": 1,
-                "attack_speed": 1.8,
-                "move_speed": 1.8,
-                "target_type": "ground",
-                "attack_type": "melee",
-            },
-            "defender_spec": {
-                "name": "Giant",
-                "level": 1,
-                "hp": 300,
-                "atk": 60,
-                "role": "ground_enemy",
-                "range": 1,
-                "attack_speed": 0.6,
-                "move_speed": 0.6,
-                "target_type": "ground",
-                "attack_type": "melee",
-            },
-            "trials": 100,
-            "attacker_pos": (0.0, 0.0),
-            "defender_pos": (4.0, 0.0),
-            "verbose_each": False,
-        },
-    ]
+    """
+    battle_scenarios_*.md 시나리오 + units.json(SSOT)을 사용하는 전투 프리셋 실행 메뉴.
 
-    print("\n=== 전투 시나리오 프리셋 ===")
-    for i, s in enumerate(scenarios, start=1):
-        print(f"{i}) {s['title']}")
+    - 시나리오 파일은 이름, 레벨, encounter_type(duel/swarm)만 들고 있고
+    - 실제 수치는 units.json 에서 가져온 뒤, 레벨에 맞게 보정해서 사용한다.
+    """
+
+    def _get_name_from_scenario(s: dict, side: str) -> str:
+        # side: "attacker" or "defender"
+        name_key = f"{side}_name"
+        spec_key = f"{side}_spec"
+
+        name = str(s.get(name_key) or "").strip()
+        if name:
+            return name
+
+        spec = s.get(spec_key)
+        if isinstance(spec, dict):
+            n = spec.get("name")
+            if isinstance(n, str) and n.strip():
+                return n.strip()
+
+        return "UNKNOWN"
+
+    def _get_level_from_scenario(s: dict, side: str) -> int:
+        level_key = f"{side}_level"
+        v = s.get(level_key)
+        if v is not None:
+            try:
+                lv = int(v)
+                if lv >= 1:
+                    return lv
+            except Exception:
+                pass
+
+        spec_key = f"{side}_spec"
+        spec = s.get(spec_key)
+        if isinstance(spec, dict) and "level" in spec:
+            try:
+                lv = int(spec["level"])
+                if lv >= 1:
+                    return lv
+            except Exception:
+                pass
+
+        return 1
+
+    def _clone_unit_with_level(base: Unit, level: int) -> Unit:
+        """units.json 에서 가져온 base 유닛을 target level로 보정한 복제본을 만든다."""
+        data = base.to_dict()
+        u = Unit.from_dict(data)
+
+        target = max(1, int(level))
+        delta = target - u.level
+        if delta != 0:
+            u.hp += u.hp_per_level * delta
+            u.atk += u.atk_per_level * delta
+            u.level = target
+        return u
+
+    def _resolve_unit(units_list: List[Unit], s: dict, side: str) -> Optional[Unit]:
+        name = _get_name_from_scenario(s, side)
+        base = find_unit_by_name_fuzzy(units_list, name)
+        if base is None:
+            return None
+        lv = _get_level_from_scenario(s, side)
+        return _clone_unit_with_level(base, lv)
+
+    # --- 1) 시나리오 로드 ---
+    scenarios = load_scenarios_from_markdown()
+    if not scenarios:
+        print("\n[!] battle_scenarios_*.md 시나리오 파일을 찾지 못했습니다.")
+        print("    예: battle_scenarios_duel.md, battle_scenarios_swarm.md")
+        return
+
+    # --- 2) 목록 출력 ---
+    print("\n=== 전투 시나리오 프리셋 (SSOT = units.json) ===")
+    for idx, s in enumerate(scenarios, start=1):
+        enc_type = (s.get("encounter_type") or "duel").strip().lower()
+        defender_count = s.get("defender_count")
+        try:
+            defender_count = int(defender_count) if defender_count is not None else 1
+        except Exception:
+            defender_count = 1
+
+        title = s.get("title") or f"Scenario {idx}"
+        a_name = _get_name_from_scenario(s, "attacker")
+        d_name = _get_name_from_scenario(s, "defender")
+
+        if enc_type == "swarm":
+            tag = f"swarm x{defender_count}"
+        else:
+            tag = "duel"
+
+        print(f"{idx}) [{tag}] {title} :: {a_name} vs {d_name}")
+
     print("0) 취소")
 
-    sel = input("번호를 선택하세요: ").strip()
-    if sel == "0":
-        print("취소했습니다.\n")
-        return
+    # --- 3) 선택 ---
+    while True:
+        try:
+            choice = int(input("번호를 선택하세요: ").strip())
+        except ValueError:
+            print("정수를 입력하세요.")
+            continue
+
+        if choice == 0:
+            return
+
+        if 1 <= choice <= len(scenarios):
+            scenario = scenarios[choice - 1]
+            break
+
+        print("잘못된 번호입니다.")
+
+    # --- 4) 시나리오 → 유닛/메타 변환 ---
+    encounter_type = (scenario.get("encounter_type") or "duel").strip().lower()
+    defender_count = scenario.get("defender_count")
     try:
-        idx = int(sel) - 1
-        if idx < 0 or idx >= len(scenarios):
-            raise ValueError
-    except ValueError:
-        print("잘못된 번호입니다.\n")
+        defender_count = int(defender_count) if defender_count is not None else 1
+    except Exception:
+        defender_count = 1
+
+    trials = scenario.get("trials")
+    try:
+        trials = int(trials) if trials is not None else 200
+    except Exception:
+        trials = 200
+
+    attacker_pos = scenario.get("attacker_pos") or [0.0, 0.0]
+    defender_pos = scenario.get("defender_pos") or [5.0, 0.0]
+    defender_spread = scenario.get("defender_spread")
+    verbose_each = bool(scenario.get("verbose_each"))
+
+    attacker = _resolve_unit(units, scenario, "attacker")
+    defender_template = _resolve_unit(units, scenario, "defender")
+
+    if attacker is None:
+        print("\n[!] 공격자 유닛을 units.json 에서 찾지 못했습니다.")
+        print(f"    attacker_name={_get_name_from_scenario(scenario, 'attacker')}")
         return
 
-    scenario = scenarios[idx]
-    session_run_id = str(uuid.uuid4())  # 이 시나리오 실행(세션) 단위로 고정
-
-    # 시나리오 실행은 "시나리오 스펙"을 단일 소스(SSOT)로 사용한다.
-    # units.json 스펙과 섞이면 결과 재현/비교가 어려워질 수 있다.
-    attacker = make_unit_from_spec(scenario["attacker_spec"])
-    defender = make_unit_from_spec(scenario["defender_spec"])
-    trials = int(scenario.get("trials", 100))
-    attacker_pos = tuple(scenario.get("attacker_pos", (0.0, 0.0)))
-    defender_pos = tuple(scenario.get("defender_pos", (5.0, 0.0)))
-    verbose_each = bool(scenario.get("verbose_each", False))
-
-    print("\n=== 선택된 시나리오 ===")
-    print(f"- {scenario['title']}")
-    print(f"- trials: {trials}")
-    print(f"- attacker_pos: {attacker_pos}")
-    print(f"- defender_pos: {defender_pos}\n")
-
-    print("[공격자]")
-    print_unit_detail(attacker)
-    print("[방어자]")
-    print_unit_detail(defender)
-
-    if not confirm_yes_no("이 구성으로 시나리오 실험을 실행할까요? (y/n): "):
-        print("시나리오 실행을 취소했습니다.\n")
+    if defender_template is None:
+        print("\n[!] 수비 유닛을 units.json 에서 찾지 못했습니다.")
+        print(f"    defender_name={_get_name_from_scenario(scenario, 'defender')}")
         return
 
-    print("\n=== 자동 전투 실험 시작 ===")
-    summary = run_duel_trials_2d(
-        attacker=attacker,
-        defender=defender,
-        trials=trials,
-        attacker_pos=attacker_pos,
-        defender_pos=defender_pos,
-        verbose_each=verbose_each,
-    )
+        # --- 5) 전투 실행 ---
+    print("\n=== 시뮬레이션 실행 ===")
+    print(f"- 타입: {encounter_type}")
+    print(f"- 시도 횟수: {trials}")
+    if encounter_type == "swarm":
+        print(f"- defender_count: {defender_count}")
 
-    print("\n=== 시나리오 실험 요약(dict) ===")
-    print(summary)
-    print()
+    if encounter_type == "swarm":
+        summary = run_swarm_trials_2d(
+            attacker=attacker,
+            defender_template=defender_template,
+            defender_count=defender_count,
+            trials=trials,
+            attacker_pos=tuple(attacker_pos),
+            defender_pos=tuple(defender_pos),
+            defender_spread=defender_spread,
+            verbose_each=verbose_each,
+        )
+        engine_name = "run_swarm_trials_2d"
+    else:
+        summary = run_duel_trials_2d(
+            attacker=attacker,
+            defender=defender_template,
+            trials=trials,
+            attacker_pos=tuple(attacker_pos),
+            defender_pos=tuple(defender_pos),
+            verbose_each=verbose_each,
+        )
+        engine_name = "run_duel_trials_2d"
 
-    if confirm_yes_no("이 결과를 JSONL로 저장할까요? (y/n): "):
-        path = input("저장 경로(기본: logs/scenarios.jsonl): ").strip() or "logs/scenarios.jsonl"
-        record = {
-            **_new_log_envelope("scenario_preset", "run_duel_trials_2d", run_id=session_run_id),
-            "scenario_title": scenario.get("title"),
-            "scenario_source": scenario.get("_source"),
-            "spec_source": "scenario_spec",
-            "scenario_spec": scenario,
-            "summary": summary,
-        }
+        # duel 기본 메타 값 보강
+        summary["encounter_type"] = "duel"
+        summary["defender_count"] = 1
+        summary["defender_spread"] = None
 
-        append_jsonl(path, record)
-        print(f"[저장 완료] {path}\n")
+    # swarm 쪽 메타도 빠져 있으면 보강
+    summary.setdefault("encounter_type", encounter_type)
+    summary.setdefault("defender_count", defender_count)
+    summary.setdefault("defender_spread", defender_spread)
+
+    # ✅ 여기부터 출력 부분을 교체
+    print("\n=== 전투 실험 요약 (multi-trial) ===")
+    print(f"공격자: {summary.get('attacker_name', attacker.name)} (Lv.{summary.get('attacker_level', attacker.level)})")
+    print(f"방어자: {summary.get('defender_name', defender_template.name)} (Lv.{summary.get('defender_level', defender_template.level)})")
+    print(f"실험 횟수(trials): {summary.get('trials', trials)}\n")
+
+    print(f"- 공격자 승률        : {summary.get('attacker_win_rate', 0.0) * 100:.1f}%")
+    print(f"- 방어자 승률        : {summary.get('defender_win_rate', 0.0) * 100:.1f}%")
+    print(f"- 무승부 비율        : {summary.get('draw_rate', 0.0) * 100:.1f}%")
+    print(f"- no_result 비율     : {summary.get('no_result_rate', 0.0) * 100:.1f}%\n")
+
+    print(f"- 평균 전투 시간     : {summary.get('avg_time', 0.0):.2f}초")
+    print(f"- 공격자 평균 최종 HP: {summary.get('avg_attacker_final_hp', 0.0):.1f}")
+    print(f"- 방어자 평균 최종 HP: {summary.get('avg_defender_final_hp', 0.0):.1f}")
+    print(f"- 공격자 평균 공격 수: {summary.get('avg_attacker_attacks', 0.0):.1f}")
+    print(f"- 방어자 평균 공격 수: {summary.get('avg_defender_attacks', 0.0):.1f}")
+
+
+    # --- 6) 로그 저장 여부 ---
+    if not confirm_yes_no("\n이 결과를 logs/scenarios.jsonl 에 저장할까요? (y/n): "):
+        return
+
+    out_path = input("저장 경로를 입력하세요 (기본: logs/scenarios.jsonl): ").strip() or "logs/scenarios.jsonl"
+    run_id = str(uuid.uuid4())
+
+    record = {
+        **_new_log_envelope(kind="scenario_preset", engine=engine_name, run_id=run_id),
+        "scenario_title": scenario.get("title"),
+        "scenario_source": scenario.get("_source"),
+        "spec_source": "units_ssot",
+        # 시나리오 원문(이름/레벨/타입)도 함께 남겨두기
+        "scenario_spec": scenario,
+        # 실제로 사용된 유닛 스냅샷
+        "resolved_units": {
+            "attacker": attacker.to_dict(),
+            "defender_template": defender_template.to_dict(),
+        },
+        "summary": summary,
+    }
+
+    append_jsonl(out_path, record)
+    print(f"[OK] saved scenario_preset log to {out_path}")
+

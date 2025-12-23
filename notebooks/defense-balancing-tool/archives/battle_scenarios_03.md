@@ -8,6 +8,8 @@
 ```json
 {
   "title": "시나리오 3: Assassin vs Giant 1:1",
+  "encounter_type": "duel",
+  "defender_count": 1,
   "attacker_spec": {
     "name": "Assassin",
     "level": 1,

@@ -12,7 +12,8 @@
     "target_type": "ground",
     "attack_type": "melee",
     "hp_per_level": 35,
-    "atk_per_level": 4
+    "atk_per_level": 4,
+    "perks": []
   },
   {
     "name": "Archer",
@@ -27,7 +28,8 @@
     "target_type": "both",
     "attack_type": "ranged",
     "hp_per_level": 25,
-    "atk_per_level": 6
+    "atk_per_level": 6,
+    "perks": []
   },
   {
     "name": "Mage",
@@ -42,7 +44,8 @@
     "target_type": "ground",
     "attack_type": "magic",
     "hp_per_level": 20,
-    "atk_per_level": 7
+    "atk_per_level": 7,
+    "perks": []
   },
   {
     "name": "Tank",
@@ -57,7 +60,8 @@
     "target_type": "ground",
     "attack_type": "melee",
     "hp_per_level": 40,
-    "atk_per_level": 3
+    "atk_per_level": 3,
+    "perks": []
   },
   {
     "name": "AntiAir Tower",
@@ -72,7 +76,8 @@
     "target_type": "air",
     "attack_type": "ranged",
     "hp_per_level": 25,
-    "atk_per_level": 6
+    "atk_per_level": 6,
+    "perks": []
   },
   {
     "name": "Goblin",
@@ -87,7 +92,8 @@
     "target_type": "tower",
     "attack_type": "melee",
     "hp_per_level": 20,
-    "atk_per_level": 3
+    "atk_per_level": 3,
+    "perks": []
   },
   {
     "name": "Runner",
@@ -102,7 +108,8 @@
     "target_type": "tower",
     "attack_type": "melee",
     "hp_per_level": 15,
-    "atk_per_level": 2
+    "atk_per_level": 2,
+    "perks": []
   },
   {
     "name": "Armored Orc",
@@ -117,7 +124,8 @@
     "target_type": "tower",
     "attack_type": "melee",
     "hp_per_level": 40,
-    "atk_per_level": 4
+    "atk_per_level": 4,
+    "perks": []
   },
   {
     "name": "Ogre Boss",
@@ -132,7 +140,8 @@
     "target_type": "tower",
     "attack_type": "melee",
     "hp_per_level": 60,
-    "atk_per_level": 6
+    "atk_per_level": 6,
+    "perks": []
   },
   {
     "name": "Wyvern",
@@ -147,7 +156,8 @@
     "target_type": "tower",
     "attack_type": "melee",
     "hp_per_level": 30,
-    "atk_per_level": 4
+    "atk_per_level": 4,
+    "perks": []
   },
   {
     "name": "Dark Shaman",
@@ -162,6 +172,7 @@
     "target_type": "tower",
     "attack_type": "magic",
     "hp_per_level": 25,
-    "atk_per_level": 5
+    "atk_per_level": 5,
+    "perks": []
   }
 ]

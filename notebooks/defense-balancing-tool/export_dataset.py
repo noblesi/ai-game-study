@@ -167,6 +167,13 @@ def export_csv(records: List[Dict[str, Any]], out_path: str, kinds: List[str], m
         row["attacker_pos"] = s.get("attacker_pos")
         row["defender_pos"] = s.get("defender_pos")
 
+        # 전투 타입(duel/swarm) + swarm일 때 defender 수
+        row["encounter_type"] = s.get("encounter_type", "duel")
+        try:
+            row["defender_count"] = int(s.get("defender_count", 1) or 1)
+        except Exception:
+            row["defender_count"] = 1
+
         # unit features
         row.update(flatten_unit(s.get("attacker_unit"), "a_"))
         row.update(flatten_unit(s.get("defender_unit"), "d_"))
@@ -176,7 +183,9 @@ def export_csv(records: List[Dict[str, Any]], out_path: str, kinds: List[str], m
         a_name = row.get("a_name")
         d_name = row.get("d_name")
         if isinstance(a_name, str) and isinstance(d_name, str) and a_name.strip() and d_name.strip():
-            row["pair_key"] = f"{a_name.strip()}__vs__{d_name.strip()}"
+            encounter = str(row.get("encounter_type") or "duel").lower()
+            count = row.get("defender_count")
+            row["pair_key"] = f"{a_name.strip()}__vs__{d_name.strip()}__{encounter}__x{count}"
         else:
             row["pair_key"] = None
 
@@ -229,7 +238,7 @@ def export_csv(records: List[Dict[str, Any]], out_path: str, kinds: List[str], m
         "pair_key",
         "trials", "wins_attacker", "wins_defender", "draws", "no_result",
         "attacker_win_rate", "defender_win_rate", "draw_rate", "no_result_rate", "avg_time",
-        "attacker_pos", "defender_pos",
+        "attacker_pos", "defender_pos", "encounter_type", "defender_count",
         *[f"a_{k}" for k in UNIT_KEYS],
         *[f"d_{k}" for k in UNIT_KEYS],
 

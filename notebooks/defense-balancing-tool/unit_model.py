@@ -1,5 +1,6 @@
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import List
 
 
 @dataclass
@@ -37,12 +38,24 @@ class Unit:
     # 성장계수(레벨업 시 증가량)
     hp_per_level: int = 30
     atk_per_level: int = 5
+
+    # Perk(레벨 보상)
+    # - 3/6/10레벨에 1개씩 선택(최대 3개)
+    # - 실제 선택/검증 로직은 unit_logic.py가 담당
+    perks: List[str] = field(default_factory=list)
     
-    def level_up(self) -> None:
-        # 유닛 레벨을 1 올리고, HP/ATK를 함께 증가시킨다
+    def level_up(self, max_level: int = 10) -> bool:
+        """유닛 레벨을 1 올리고, HP/ATK를 함께 증가.
+
+        - 기본 룰: max_level=10
+        - 레벨업 불가면 False 반환
+        """
+        if self.level >= max_level:
+            return False
         self.level += 1
         self.hp += self.hp_per_level
         self.atk += self.atk_per_level
+        return True
 
     def to_dict(self) -> dict:
         return{
@@ -59,6 +72,7 @@ class Unit:
             "attack_type": self.attack_type,
             "hp_per_level": self.hp_per_level,
             "atk_per_level": self.atk_per_level,
+            "perks": list(self.perks) if self.perks else [],
         }
     
     @classmethod
@@ -77,4 +91,5 @@ class Unit:
             attack_type=data.get("attack_type", "melee"),
             hp_per_level=data.get("hp_per_level", 30),
             atk_per_level=data.get("atk_per_level", 5),
+            perks=list(data.get("perks") or []),
         )
