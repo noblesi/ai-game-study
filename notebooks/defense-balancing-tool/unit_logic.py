@@ -27,6 +27,7 @@ from battle_sim import (
     run_duel_trials_2d,
     run_swarm_trials_2d,
 )
+from perk_io import load_perk_catalog
 
 from scenario_loader import load_scenarios_from_markdown
 
@@ -46,38 +47,8 @@ PERK_LEVELS = (3, 6, 10)
 # Perk 카탈로그(SSOT)
 # - id: 저장값(데이터셋/로그에도 그대로 들어감)
 # - tags: "duel"/"swarm"/"all" (전투 타입에 따라 적용)
-PERK_CATALOG = {
-    "shield": {
-        "name": "Shield",
-        "tags": ["all"],
-        "desc": "최대 HP +20%",
-    },
-    "duelist": {
-        "name": "Duelist",
-        "tags": ["duel"],
-        "desc": "1v1에서 ATK +10%, 공격속도 +10%",
-    },
-    "cleave": {
-        "name": "Cleave",
-        "tags": ["swarm"],
-        "desc": "1vN에서 공격 시 추가 1명에게 50% 스플래시",
-    },
-    "execute": {
-        "name": "Execute",
-        "tags": ["all"],
-        "desc": "대상이 HP 30% 이하일 때 피해 +50%",
-    },
-    "lifesteal": {
-        "name": "Lifesteal",
-        "tags": ["all"],
-        "desc": "가한 피해의 20%를 회복(최대 HP까지)",
-    },
-    "rapid": {
-        "name": "Rapid",
-        "tags": ["all"],
-        "desc": "공격속도 +20%",
-    },
-}
+PERK_CATALOG = load_perk_catalog("perks.json")
+
 
 
 def _format_perks(perks: List[str]) -> str:

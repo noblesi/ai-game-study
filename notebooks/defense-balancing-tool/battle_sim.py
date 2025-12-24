@@ -667,8 +667,21 @@ def build_experiment_summary(
     return summary
 
 
+import re
+from difflib import SequenceMatcher
+
 def _normalize_name(name: str) -> str:
-    return "".join(name.lower().split())
+    """
+    이름 정규화:
+    - 영문/숫자/한글 토큰만 추출
+    - tower/unit 같은 흔한 접미어 제거
+    - 토큰을 붙여서 비교용 문자열로 반환
+    """
+    toks = re.findall(r"[0-9a-zA-Z가-힣]+", str(name).lower())
+    stop = {"tower", "unit"}  # 필요하면 {"tower","unit","mob"} 같은 것도 추가 가능
+    toks = [t for t in toks if t not in stop]
+    return "".join(toks)
+
 
 
 def _find_unit_by_name_fuzzy(units: List[Unit], query_name: str) -> Optional[Unit]:
@@ -682,11 +695,25 @@ def _find_unit_by_name_fuzzy(units: List[Unit], query_name: str) -> Optional[Uni
         if _normalize_name(u.name) == q:
             return u
 
-    # 2) contains
+    # 2) contains (양방향)
     for u in units:
-        if q in _normalize_name(u.name):
+        n = _normalize_name(u.name)
+        if q in n or n in q:
             return u
 
+    # 3) similarity fallback (최고 점수 1개 반환)
+    best_u = None
+    best_score = 0.0
+    for u in units:
+        n = _normalize_name(u.name)
+        score = SequenceMatcher(None, q, n).ratio()
+        if score > best_score:
+            best_score = score
+            best_u = u
+
+    # 너무 엉뚱한 매칭 방지 (임계값)
+    if best_score >= 0.70:
+        return best_u
     return None
 
 

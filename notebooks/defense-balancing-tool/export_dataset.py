@@ -14,8 +14,9 @@ import argparse
 import csv
 import json
 import os
+import math
 from collections import defaultdict
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Set
 
 
 UNIT_KEYS = [
@@ -73,6 +74,29 @@ def flatten_unit(u: Any, prefix: str) -> Dict[str, Any]:
         out[f"{prefix}{k}"] = u.get(k)
     return out
 
+def _as_point(v: Any) -> Tuple[float, float] | None:
+    """JSON에서 읽은 좌표(list/tuple)를 (x,y)로 변환."""
+    if isinstance(v, (list, tuple)) and len(v) >= 2:
+        x = to_float(v[0])
+        y = to_float(v[1])
+        if x is None or y is None:
+            return None
+        return (x, y)
+    return None
+
+
+def _as_points(v: Any) -> List[Tuple[float, float]]:
+    """스웜 defender_pos처럼 좌표 리스트를 [(x,y),...]로 변환."""
+    if not isinstance(v, list):
+        return []
+    pts: List[Tuple[float, float]] = []
+    for it in v:
+        p = _as_point(it)
+        if p is not None:
+            pts.append(p)
+    return pts
+
+
 def to_float(x: Any) -> float | None:
     if x is None:
         return None
@@ -118,6 +142,14 @@ def export_csv(records: List[Dict[str, Any]], out_path: str, kinds: List[str], m
 
     rows: List[Dict[str, Any]] = []
     stats = defaultdict(int)
+
+    def _perk_slots(perks: list[str]) -> dict:
+    # perks 리스트의 0/1/2번째를 3/6/10 슬롯으로 매핑(없으면 빈 문자열)
+        return {
+            "perk_3": perks[0] if len(perks) >= 1 else "",
+            "perk_6": perks[1] if len(perks) >= 2 else "",
+            "perk_10": perks[2] if len(perks) >= 3 else "",
+        }
 
     for r in records:
         kind = r.get("kind", "unknown")
@@ -166,6 +198,26 @@ def export_csv(records: List[Dict[str, Any]], out_path: str, kinds: List[str], m
         # positions (2D 시나리오면 종종 존재)
         row["attacker_pos"] = s.get("attacker_pos")
         row["defender_pos"] = s.get("defender_pos")
+
+        # start distance (2D용)
+        # - duel: attacker_pos ↔ defender_pos
+        # - swarm: attacker_pos ↔ (defender_pos 리스트 중 최소 거리) 또는 defender_pos가 1개 점이면 그대로
+        start_distance = None
+        ap = _as_point(row["attacker_pos"])
+        enc_tmp = str(s.get("encounter_type", "duel") or "duel").strip().lower()
+        dp_raw = row["defender_pos"]
+        if ap is not None:
+            if enc_tmp == "swarm" and isinstance(dp_raw, list) and dp_raw and isinstance(dp_raw[0], (list, tuple)):
+                dps = _as_points(dp_raw)
+                if dps:
+                    start_distance = min(math.hypot(px - ap[0], py - ap[1]) for px, py in dps)
+            else:
+                dp = _as_point(dp_raw)
+                if dp is not None:
+                    start_distance = math.hypot(dp[0] - ap[0], dp[1] - ap[1])
+
+        row["start_distance"] = start_distance
+
 
         # 전투 타입(duel/swarm) + swarm일 때 defender 수
         row["encounter_type"] = s.get("encounter_type", "duel")
@@ -238,7 +290,7 @@ def export_csv(records: List[Dict[str, Any]], out_path: str, kinds: List[str], m
         "pair_key",
         "trials", "wins_attacker", "wins_defender", "draws", "no_result",
         "attacker_win_rate", "defender_win_rate", "draw_rate", "no_result_rate", "avg_time",
-        "attacker_pos", "defender_pos", "encounter_type", "defender_count",
+        "attacker_pos", "defender_pos", "start_distance", "encounter_type", "defender_count",
         *[f"a_{k}" for k in UNIT_KEYS],
         *[f"d_{k}" for k in UNIT_KEYS],
 

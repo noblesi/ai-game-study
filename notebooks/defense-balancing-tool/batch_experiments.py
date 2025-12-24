@@ -5,7 +5,7 @@ import random
 import uuid
 
 from unit_io import load_units_from_file
-from battle_sim import simulate_duel, simulate_duel_2d, build_experiment_summary
+from battle_sim import simulate_duel, simulate_duel_2d, build_experiment_summary, run_swarm_trials_2d
 from utils import append_jsonl
 
 
@@ -14,6 +14,7 @@ LOG_SCHEMA_VERSION = "v1"
 
 def main() -> None:
     p = argparse.ArgumentParser()
+    p.add_argument("--encounter", choices=["duel", "swarm"], default="duel", help="duel=1:1, swarm=1:N(근사)")
     p.add_argument("--pairs", type=int, default=30, help="생성할 (공격자,방어자) 조합 개수")
     p.add_argument("--trials", type=int, default=100, help="조합 당 반복 전투 횟수")
     p.add_argument("--mode", choices=["1", "2"], default="2", help="1=1D, 2=2D")
@@ -21,6 +22,8 @@ def main() -> None:
     p.add_argument("--out", default="logs/experiments.jsonl")
     p.add_argument("--random-pos", action="store_true", help="(2D) 시작 좌표를 랜덤으로 섞기")
     p.add_argument("--pos-range", type=float, default=8.0, help="(2D) 랜덤 좌표 범위 (+/-)")
+    p.add_argument("--defender-counts", default="3,5,8", help="(swarm) defender_count 후보들(예: 3,5,8)")
+    p.add_argument("--defender-spread", type=float, default=None, help="(swarm) meta로 남길 spread 값(근사 시뮬에는 영향 없음)")
     args = p.parse_args()
 
     units = load_units_from_file()
@@ -30,10 +33,34 @@ def main() -> None:
 
     rnd = random.Random(args.seed)
     session_run_id = str(uuid.uuid4())
-    engine = "simulate_duel" if args.mode == "1" else "simulate_duel_2d"
+    if args.encounter == "swarm":
+        if args.mode != "2":
+            print("[WARN] swarm은 2D만 지원합니다. mode=2로 강제합니다.")
+            args.mode = "2"
+        engine = "run_swarm_trials_2d"
+    else:
+        engine = "simulate_duel" if args.mode == "1" else "simulate_duel_2d"
+
+    # swarm defender_count 후보 파싱
+    counts: list[int] = []
+    if args.encounter == "swarm":
+        for part in str(args.defender_counts).split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                n = int(part)
+                if n >= 1:
+                    counts.append(n)
+            except Exception:
+                continue
+        if not counts:
+            counts = [3]
 
     used = set()
     max_pairs = len(units) * (len(units) - 1)
+    if args.encounter == "swarm":
+        max_pairs *= len(counts)
     target_pairs = min(args.pairs, max_pairs)
 
     print(f"[INFO] units: {len(units)}")
@@ -47,7 +74,11 @@ def main() -> None:
         di = rnd.randrange(len(units))
         if ai == di:
             continue
-        key = (ai, di)
+        if args.encounter == "swarm":
+            dc = rnd.choice(counts)
+            key = (ai, di, dc)
+        else:
+            key = (ai, di)
         if key in used:
             continue
         used.add(key)
@@ -55,56 +86,87 @@ def main() -> None:
         attacker = units[ai]
         defender = units[di]
 
-        wins_attacker = wins_defender = draws = no_result = 0
-        total_time = 0.0
-        total_attacker_hp = 0.0
-        total_defender_hp = 0.0
-        total_attacker_attacks = 0
-        total_defender_attacks = 0
-
-        for _ in range(args.trials):
-            if args.mode == "1":
-                result = simulate_duel(attacker, defender, verbose=False)
+        # swarm은 run_swarm_trials_2d(...)가 요약까지 만들어줌
+        if args.encounter == "swarm":
+            if args.random_pos:
+                ax = rnd.uniform(-args.pos_range, args.pos_range)
+                ay = rnd.uniform(-args.pos_range, args.pos_range)
+                dx = rnd.uniform(-args.pos_range, args.pos_range)
+                dy = rnd.uniform(-args.pos_range, args.pos_range)
+                attacker_pos = (ax, ay)
+                defender_pos = (dx, dy)
             else:
-                if args.random_pos:
-                    ax = rnd.uniform(-args.pos_range, args.pos_range)
-                    ay = rnd.uniform(-args.pos_range, args.pos_range)
-                    dx = rnd.uniform(-args.pos_range, args.pos_range)
-                    dy = rnd.uniform(-args.pos_range, args.pos_range)
-                    result = simulate_duel_2d(attacker, defender, attacker_pos=(ax, ay), defender_pos=(dx, dy), verbose=False)
+                attacker_pos = (0.0, 0.0)
+                defender_pos = (5.0, 0.0)
+
+            summary = run_swarm_trials_2d(
+                attacker=attacker,
+                defender_template=defender,
+                defender_count=dc,
+                trials=args.trials,
+                attacker_pos=attacker_pos,
+                defender_pos=defender_pos,
+                defender_spread=args.defender_spread,
+                verbose_each=False,
+            )
+        else:
+            wins_attacker = wins_defender = draws = no_result = 0
+            total_time = 0.0
+            total_attacker_hp = 0.0
+            total_defender_hp = 0.0
+            total_attacker_attacks = 0
+            total_defender_attacks = 0
+
+            for _ in range(args.trials):
+                if args.mode == "1":
+                    result = simulate_duel(attacker, defender, verbose=False)
                 else:
-                    result = simulate_duel_2d(attacker, defender, verbose=False)
+                    if args.random_pos:
+                        ax = rnd.uniform(-args.pos_range, args.pos_range)
+                        ay = rnd.uniform(-args.pos_range, args.pos_range)
+                        dx = rnd.uniform(-args.pos_range, args.pos_range)
+                        dy = rnd.uniform(-args.pos_range, args.pos_range)
+                        result = simulate_duel_2d(attacker, defender, attacker_pos=(ax, ay), defender_pos=(dx, dy), verbose=False)
+                    else:
+                        result = simulate_duel_2d(attacker, defender, verbose=False)
 
-            winner = result["winner"]
-            if winner == "attacker":
-                wins_attacker += 1
-            elif winner == "defender":
-                wins_defender += 1
-            elif winner == "draw":
-                draws += 1
-            else:
-                no_result += 1
+                winner = result["winner"]
+                if winner == "attacker":
+                    wins_attacker += 1
+                elif winner == "defender":
+                    wins_defender += 1
+                elif winner == "draw":
+                    draws += 1
+                else:
+                    no_result += 1
 
-            total_time += result["time"]
-            total_attacker_hp += result["attacker_final_hp"]
-            total_defender_hp += result["defender_final_hp"]
-            total_attacker_attacks += result["attacker_attacks"]
-            total_defender_attacks += result["defender_attacks"]
+                total_time += result["time"]
+                total_attacker_hp += result["attacker_final_hp"]
+                total_defender_hp += result["defender_final_hp"]
+                total_attacker_attacks += result["attacker_attacks"]
+                total_defender_attacks += result["defender_attacks"]
 
-        summary = build_experiment_summary(
-            attacker=attacker,
-            defender=defender,
-            trials=args.trials,
-            total_time=total_time,
-            total_attacker_hp=total_attacker_hp,
-            total_defender_hp=total_defender_hp,
-            total_attacker_attacks=total_attacker_attacks,
-            total_defender_attacks=total_defender_attacks,
-            wins_attacker=wins_attacker,
-            wins_defender=wins_defender,
-            draws=draws,
-            no_result=no_result,
-        )
+            summary = build_experiment_summary(
+                attacker=attacker,
+                defender=defender,
+                trials=args.trials,
+                total_time=total_time,
+                total_attacker_hp=total_attacker_hp,
+                total_defender_hp=total_defender_hp,
+                total_attacker_attacks=total_attacker_attacks,
+                total_defender_attacks=total_defender_attacks,
+                wins_attacker=wins_attacker,
+                wins_defender=wins_defender,
+                draws=draws,
+                no_result=no_result,
+            )
+
+            # duel 메타 보강
+            if args.mode != "1" and not args.random_pos:
+                summary.setdefault("attacker_pos", (0.0, 0.0))
+                summary.setdefault("defender_pos", (5.0, 0.0))
+            summary.setdefault("encounter_type", "duel")
+            summary.setdefault("defender_count", 1)
 
         record = {
             "schema_version": LOG_SCHEMA_VERSION,

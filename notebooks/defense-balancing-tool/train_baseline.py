@@ -6,42 +6,70 @@ import random
 from collections import Counter
 from typing import Any, Dict, List, Tuple
 
-# build_features()의 x 벡터 순서와 반드시 동일해야 함
-FEATURE_NAMES = [
+# (1) base(퍼크 제외) - "x를 만드는 순서" 그대로 적어야 함
+BASE_FEATURE_NAMES = [
+    # meta(3)  <<== x 맨 앞이 이 순서라면, 이름도 이 순서!
+    "encounter_is_swarm", "defender_count", "start_distance",
+
     # base attacker(5)
     "a_hp", "a_atk", "a_range", "a_attack_speed", "a_move_speed",
     # base defender(5)
     "d_hp", "d_atk", "d_range", "d_attack_speed", "d_move_speed",
+
     # deltas(5)
     "dhp", "datk", "drange", "dattack_speed", "dmove_speed",
-    # derived(7) - export_dataset.py에서 추가한 컬럼을 x에 넣었다는 가정
+
+    # derived(7)
     "a_dps", "d_dps", "a_ttk_est", "d_ttk_est",
     "dps_adv", "range_adv", "ttk_adv",
+
+    # perk count(3)
+    "a_perk_count", "d_perk_count", "perk_count_adv",
 ]
 
+# (2) row에서 숫자로 읽어올 키들
+#  - encounter_is_swarm는 row에 없고 계산값이므로 여기 넣지 않음
+BASE_NUM_KEYS = [
+    "defender_count",
+    "start_distance",
 
-NUM_KEYS = [
-    # base
     "a_hp", "a_atk", "a_range", "a_attack_speed", "a_move_speed",
     "d_hp", "d_atk", "d_range", "d_attack_speed", "d_move_speed",
-    # derived (export_dataset.py에서 추가됨)
+
     "a_dps", "d_dps", "a_ttk_est", "d_ttk_est",
     "dps_adv", "range_adv", "ttk_adv",
+
+    "a_perk_count", "d_perk_count",
 ]
 
+FEATURE_NAMES: list[str] = []
+NUM_KEYS: list[str] = []
+PERK_IDS: list[str] = []
 
-def to_float(x: Any) -> float | None:
-    if x is None:
-        return None
-    if isinstance(x, (int, float)):
-        return float(x)
-    s = str(x).strip()
-    if not s:
-        return None
-    try:
-        return float(s)
-    except Exception:
-        return None
+
+def rebuild_feature_schema():
+    """PERK_IDS가 확정된 뒤, FEATURE_NAMES/NUM_KEYS를 항상 x와 동일하게 재구성."""
+    global FEATURE_NAMES, NUM_KEYS
+    FEATURE_NAMES = list(BASE_FEATURE_NAMES)
+    NUM_KEYS = list(BASE_NUM_KEYS)
+
+    # perk one-hot + advantage
+    for pid in PERK_IDS:
+        FEATURE_NAMES.extend([f"a_has_perk_{pid}", f"d_has_perk_{pid}", f"perk_adv_{pid}"])
+        NUM_KEYS.extend([f"a_has_perk_{pid}", f"d_has_perk_{pid}"])
+
+
+def detect_perk_ids(rows: list[dict]) -> list[str]:
+    """CSV 컬럼에서 a_has_perk_* / d_has_perk_*를 모아 PERK_IDS 결정."""
+    ids = set()
+    if not rows:
+        return []
+    for k in rows[0].keys():
+        if k.startswith("a_has_perk_"):
+            ids.add(k[len("a_has_perk_"):])
+        elif k.startswith("d_has_perk_"):
+            ids.add(k[len("d_has_perk_"):])
+    return sorted(ids)
 
 
 def load_csv(path: str) -> List[Dict[str, Any]]:
@@ -68,9 +96,27 @@ def build_features(row: Dict[str, Any]) -> Tuple[List[float], int] | None:
         # 최소 구현: 누락은 0.0으로 채워서 usable rows를 유지
         vals[k] = 0.0 if v is None else v
 
+    # encounter_type (categorical) -> 0/1
+    enc = str(row.get("encounter_type") or "duel").strip().lower()
+    encounter_is_swarm = 1.0 if enc == "swarm" else 0.0
 
-    # 기본 피처 + 차이(deltas)
-    x: List[float] = []
+    # meta 먼저 계산
+    encounter_type = (row.get("encounter_type") or "").strip().lower()
+    encounter_is_swarm = 1.0 if encounter_type == "swarm" else 0.0
+
+    dc_raw = to_float(row.get("defender_count"))
+    sd_raw = to_float(row.get("start_distance"))
+
+    # duel 기본 1, swarm도 0/None이면 1로 보정
+    if encounter_is_swarm < 0.5:
+        defender_count = 1.0
+    else:
+        defender_count = 1.0 if (dc_raw is None or dc_raw <= 0) else float(dc_raw)
+
+    start_distance = 0.0 if sd_raw is None else float(sd_raw)
+
+    x: list[float] = []
+    x.extend([encounter_is_swarm, defender_count, start_distance])
     x.extend([vals["a_hp"], vals["a_atk"], vals["a_range"], vals["a_attack_speed"], vals["a_move_speed"]])
     x.extend([vals["d_hp"], vals["d_atk"], vals["d_range"], vals["d_attack_speed"], vals["d_move_speed"]])
 
@@ -87,6 +133,24 @@ def build_features(row: Dict[str, Any]) -> Tuple[List[float], int] | None:
         vals["a_dps"], vals["d_dps"], vals["a_ttk_est"], vals["d_ttk_est"],
         vals["dps_adv"], vals["range_adv"], vals["ttk_adv"],
     ])
+
+    # ===== Perk features =====
+    a_pc = to_float(row.get("a_perk_count"))
+    d_pc = to_float(row.get("d_perk_count"))
+    a_pc = 0.0 if a_pc is None else a_pc
+    d_pc = 0.0 if d_pc is None else d_pc
+
+    # count + advantage
+    x.extend([a_pc, d_pc, a_pc - d_pc])
+
+    # one-hot + advantage (동적으로 감지된 PERK_IDS 사용)
+    for pid in PERK_IDS:
+        a_has = to_float(row.get(f"a_has_perk_{pid}"))
+        d_has = to_float(row.get(f"d_has_perk_{pid}"))
+        a_has = 0.0 if a_has is None else a_has
+        d_has = 0.0 if d_has is None else d_has
+        x.extend([a_has, d_has, a_has - d_has])
+
 
     return x, y
 
@@ -616,6 +680,84 @@ def write_report_md(
     with open(path, "w", encoding="utf-8") as f:
         f.writelines(lines)
 
+def write_fixed_test_report_md(
+    path: str,
+    *,
+    train_path: str,
+    test_path: str,
+    n_train_rows: int,
+    n_train_usable: int,
+    n_test_rows: int,
+    n_test_usable: int,
+    group_key: str,
+    dropped_overlap: int,
+    best_model: str,
+    threshold: float,
+    results: Dict[str, Any],
+    details: List[Dict[str, Any]] | None = None
+) -> None:
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+
+    lines: List[str] = []
+    lines.append(f"# Fixed Test Evaluation Report\n\n")
+    lines.append(f"- generated_at: {datetime.datetime.now().isoformat(timespec='seconds')}\n")
+    lines.append(f"- train: {train_path}\n")
+    lines.append(f"- test: {test_path}\n")
+    lines.append(f"- train_rows: {n_train_rows} (usable={n_train_usable})\n")
+    lines.append(f"- test_rows: {n_test_rows} (usable={n_test_usable})\n")
+    lines.append(f"- group_key: {group_key}\n")
+    if dropped_overlap:
+        lines.append(f"- dropped_overlap_groups: {dropped_overlap}\n")
+    lines.append("\n")
+
+    lines.append("## Best Model\n\n")
+    lines.append(f"- best: {best_model}\n")
+    lines.append(f"- threshold: {threshold:.2f}\n\n")
+
+    lines.append("## Metrics\n\n")
+    m = results["metrics"]
+    cm = results["cm"]
+    lines.append(f"- acc: {m['acc']:.4f}\n")
+    lines.append(f"- bal_acc: {m['bal_acc']:.4f}\n")
+    lines.append(f"- f1_1: {m['f1_1']:.4f}\n")
+    lines.append(f"- recall_1: {m['recall_1']:.4f}\n")
+    lines.append(f"- precision_1: {m['precision_1']:.4f}\n")
+    lines.append(f"- cm: {_fmt_cm(cm)}\n\n")
+
+    lines.append("## Confusion Matrix\n\n")
+    lines.append("| | pred=0 | pred=1 |\n")
+    lines.append("|---|---:|---:|\n")
+    lines.append(f"| true=0 | {cm[0][0]} | {cm[0][1]} |\n")
+    lines.append(f"| true=1 | {cm[1][0]} | {cm[1][1]} |\n")
+
+    if details:
+        lines.append("\n## Per-scenario predictions\n\n")
+        lines.append("| idx | title | pair_key | type | n | dist | y | pred | p1 | ok |\n")
+        lines.append("|---:|---|---|---|---:|---:|---:|---:|---:|:--:|\n")
+        for i, d in enumerate(details, start=1):
+            title = str(d.get("scenario_title","")).replace("|","/")
+            pair_key = str(d.get("pair_key","")).replace("|","/")
+            et = d.get("encounter_type","")
+            n = d.get("defender_count","")
+            dist = d.get("start_distance","")
+            y = d.get("y_true","")
+            pred = d.get("y_pred","")
+            p1 = d.get("proba_1", None)
+            p1s = "" if p1 is None else f"{p1:.4f}"
+            ok = "✅" if d.get("ok") else "❌"
+            lines.append(f"| {i} | {title} | {pair_key} | {et} | {n} | {dist} | {y} | {pred} | {p1s} | {ok} |\n")
+
+        wrong = [d for d in details if not d.get("ok")]
+        lines.append("\n## Errors only\n\n")
+        if not wrong:
+            lines.append("- (none)\n")
+        else:
+            for d in wrong:
+                lines.append(f"- {d.get('scenario_title')} / pair={d.get('pair_key')} y={d.get('y_true')} pred={d.get('y_pred')} p1={d.get('proba_1')}\n")
+
+    with open(path, "w", encoding="utf-8") as f:
+        f.writelines(lines)
+
 from typing import Tuple
 
 def pick_best_model(packed: Dict[str, Dict[str, Any]], metric_key: str = "f1_1") -> str:
@@ -799,8 +941,14 @@ def eval_sklearn_if_available(train: List[Tuple[List[float], int]], test: List[T
 
 
 def main() -> None:
-    p = argparse.ArgumentParser()
+    p = argparse.ArgumentParser(allow_abbrev=False)
     p.add_argument("--input", default="datasets/battle_dataset_v1.csv")
+    p.add_argument("--train", default="", help="학습(train) CSV 경로. 지정 시 --input 대신 사용")
+    p.add_argument("--test", default="", help="고정 테스트(test) CSV 경로. 지정 시 train 전체로 학습 후 test 평가를 추가로 수행")
+    p.add_argument("--report-test", default="", help="고정 테스트 평가 리포트 저장 경로")
+    p.add_argument("--drop-overlap-groups", action="store_true",
+                   help="train/test 간 group_key가 겹치는 test row 제거(누수 방지)")
+    p.add_argument("--k", type=int, default=10, help="반복 split 횟수 K (default=10)")
     p.add_argument("--test-ratio", type=float, default=0.2)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--report", default="", help="md 리포트 저장 경로(비우면 reports/baseline_eval_YYYYMMDD.md)")
@@ -822,10 +970,35 @@ def main() -> None:
     p.add_argument("--rf-topn", type=int, default=8,
                    help="리포트에 남길 RF grid 상위 N개 (default=8)")
 
-
     args = p.parse_args()
 
+    train_path = (args.train.strip() if isinstance(args.train, str) else "") or args.input
     rows = load_csv(args.input)
+    PERK_IDS = detect_perk_ids(rows)
+    rebuild_feature_schema()
+    # ===== perk 컬럼 자동 감지 + FEATURE_NAMES 확장 =====
+    global FEATURE_NAMES, NUM_KEYS
+
+    header_keys = list(rows[0].keys()) if rows else []
+    perk_ids = []
+    for k in header_keys:
+        if k.startswith("a_has_perk_"):
+            perk_ids.append(k[len("a_has_perk_"):])
+    PERK_IDS = sorted(set(perk_ids))
+
+    extra_feature_names = [
+        "encounter_is_swarm", "defender_count","start_distance",
+        "a_perk_count", "d_perk_count", "perk_count_adv"]
+    for pid in PERK_IDS:
+        extra_feature_names += [
+            f"a_has_perk_{pid}", f"d_has_perk_{pid}", f"perk_adv_{pid}"
+        ]
+
+    FEATURE_NAMES = list(BASE_FEATURE_NAMES) + extra_feature_names
+    # NUM_KEYS는 기존 BASE_NUM_KEYS 그대로 둬도 되고,
+    # 필요하면 perk_count를 여기에도 포함 가능(현재 build_features가 직접 읽어서 필수는 아님)
+    NUM_KEYS = list(BASE_NUM_KEYS)
+
     data: List[Tuple[List[float], int]] = []
     groups: List[str] = []
     for idx, row in enumerate(rows):
@@ -862,8 +1035,8 @@ def main() -> None:
         print("[WARN] usable rows too small. Run more scenarios/experiments first.")
         return
 
-        # ===== 반복 평가(운빨 줄이기) =====
-    K = 10
+    # ===== 반복 평가(운빨 줄이기) =====
+    K = int(args.k)
 
     # 모델별 결과 수집 컨테이너
     model_names = [
@@ -1266,6 +1439,143 @@ def main() -> None:
 
     print(f"[OK] wrote report: {report_path}")
 
+    # ===== Fixed Test Evaluation (optional) =====
+    if isinstance(args.test, str) and args.test.strip():
+        test_path = args.test.strip()
+        test_rows = load_csv(test_path)
 
+        test_data: List[Tuple[List[float], int]] = []
+        test_groups: List[str] = []
+        test_rows_kept: List[Dict[str, Any]] = []
+
+        for idx, row in enumerate(test_rows):
+            item = build_features(row)
+            if item is None:
+                continue
+
+            g = row.get(args.group_key)
+            if not isinstance(g, str) or not g.strip():
+                a = row.get("a_name")
+                d = row.get("d_name")
+                if isinstance(a, str) and isinstance(d, str) and a.strip() and d.strip():
+                    g = f"{a.strip()}__vs__{d.strip()}"
+                else:
+                    g = f"row_{idx}"
+
+            test_data.append(item)
+            test_groups.append(g)
+            test_rows_kept.append(row)
+
+        dropped = 0
+        if args.drop_overlap_groups and args.group:
+            train_group_set = set(groups)
+            keep_idx = [i for i, g in enumerate(test_groups) if g not in train_group_set]
+            dropped = len(test_groups) - len(keep_idx)
+            if dropped > 0:
+                test_data = [test_data[i] for i in keep_idx]
+                test_groups = [test_groups[i] for i in keep_idx]
+                test_rows_kept = [test_rows_kept[i] for i in keep_idx]
+
+        print(f"[INFO] fixed test: {test_path}")
+        print(f"[INFO] test rows: {len(test_rows)}")
+        print(f"[INFO] usable test rows: {len(test_data)}")
+        if dropped:
+            print(f"[INFO] dropped overlap groups: {dropped}")
+
+        if len(test_data) == 0:
+            print("[WARN] fixed test usable rows is 0 (after filtering). skip fixed test eval.")
+        elif not best:
+            print("[WARN] best model is empty. skip fixed test eval.")
+        else:
+            # threshold 우선순위: 튠 결과(tuned) -> rf_grid_best_row -> default(0.5)
+            thr = 0.5
+            if tuned and isinstance(tuned, list) and tuned:
+                try:
+                    thr = float(tuned[0][0])
+                except Exception:
+                    thr = 0.5
+            elif rf_grid_best_row and isinstance(rf_grid_best_row, dict) and "thr" in rf_grid_best_row:
+                try:
+                    thr = float(rf_grid_best_row["thr"])
+                except Exception:
+                    thr = 0.5
+
+            y_true = [y for _, y in test_data]
+            preds: Optional[List[int]] = None
+
+            if best.startswith("MAJORITY"):
+                maj = 1 if ys.count(1) > ys.count(0) else 0
+                preds = [maj] * len(test_data)
+                thr = 0.5
+            else:
+                # proba 기반 threshold가 가능하면 사용
+                probas = fit_predict_proba_model(data, test_data, best, seed=args.seed)
+                if probas is not None:
+                    preds = [1 if p >= thr else 0 for p in probas]
+                else:
+                    # fallback (함수들은 기존 파일에 이미 있어야 함)
+                    if best == "LR":
+                        preds = fit_predict_lr(data, test_data, class_weight=None, seed=args.seed)
+                    elif best == "LR_balanced":
+                        preds = fit_predict_lr(data, test_data, class_weight="balanced", seed=args.seed)
+                    elif best == "DT_balanced":
+                        preds = fit_predict_tree(data, test_data, model="dt", class_weight="balanced", seed=args.seed)
+                    elif best == "RF_balanced_subsample":
+                        preds = fit_predict_tree(data, test_data, model="rf", class_weight="balanced_subsample", seed=args.seed)
+
+            if preds is None:
+                print("[WARN] fixed test eval skipped (sklearn missing?).")
+            else:
+                details: List[Dict[str, Any]] = []
+                for i, row in enumerate(test_rows_kept):
+                    details.append({
+                        "scenario_title": row.get("scenario_title", ""),
+                        "pair_key": row.get("pair_key", ""),
+                        "encounter_type": row.get("encounter_type", ""),
+                        "defender_count": row.get("defender_count", ""),
+                        "start_distance": row.get("start_distance", ""),
+                        "y_true": y_true[i],
+                        "y_pred": preds[i],
+                        "proba_1": (round(probas[i], 4) if probas is not None else None),
+                        "ok": (y_true[i] == preds[i]),
+                    })
+                
+                cm = _cm_from_preds(y_true, preds)
+                m = _metrics_from_cm(cm)
+
+                print("[FIXED_TEST]")
+                print(f"- model   : {best}")
+                print(f"- thr     : {thr:.2f}")
+                print(f"- acc     : {m['acc']:.4f}")
+                print(f"- bal_acc : {m['bal_acc']:.4f}")
+                print(f"- f1_1    : {m['f1_1']:.4f}")
+                print(f"- recall_1: {m['recall_1']:.4f}")
+                print(f"- prec_1  : {m['precision_1']:.4f}")
+                print(f"- cm      : {_fmt_cm(cm)}")
+
+                report_test_path = (
+                    args.report_test.strip()
+                    if isinstance(args.report_test, str) and args.report_test.strip()
+                    else report_path.replace(".md", "_fixedtest.md")
+                )
+
+                write_fixed_test_report_md(
+                    report_test_path,
+                    train_path=train_path,
+                    test_path=test_path,
+                    n_train_rows=len(rows),
+                    n_train_usable=len(data),
+                    n_test_rows=len(test_rows),
+                    n_test_usable=len(test_data),
+                    group_key=args.group_key,
+                    dropped_overlap=dropped,
+                    best_model=best,
+                    threshold=thr,
+                    results={"metrics": m, "cm": cm},
+                    details=details,
+                )
+                print(f"[OK] wrote fixed-test report: {report_test_path}")
+
+    
 if __name__ == "__main__":
     main()
