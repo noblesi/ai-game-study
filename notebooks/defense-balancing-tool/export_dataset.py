@@ -18,6 +18,10 @@ import math
 from collections import defaultdict
 from typing import Any, Dict, List, Tuple, Set
 
+from common.jsonl import read_jsonl, schema_of, short_id
+from common.parse import to_float, safe_div
+from common.perk import load_perk_catalog
+
 
 UNIT_KEYS = [
     "name", "level", "hp", "atk",
@@ -26,41 +30,6 @@ UNIT_KEYS = [
     "target_type", "attack_type",
     "hp_per_level", "atk_per_level",
 ]
-
-
-def read_jsonl(path: str) -> Tuple[List[Dict[str, Any]], List[str]]:
-    records: List[Dict[str, Any]] = []
-    errors: List[str] = []
-    if not os.path.exists(path):
-        return records, [f"File not found: {path}"]
-
-    with open(path, "r", encoding="utf-8") as f:
-        for i, line in enumerate(f, start=1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                obj = json.loads(line)
-                if isinstance(obj, dict):
-                    records.append(obj)
-                else:
-                    errors.append(f"{path} L{i}: not a dict ({type(obj).__name__})")
-            except Exception as e:
-                errors.append(f"{path} L{i}: JSON parse error: {e}")
-    return records, errors
-
-
-def schema_of(r: Dict[str, Any]) -> str:
-    v = r.get("schema_version")
-    return v if isinstance(v, str) and v.strip() else "legacy"
-
-
-def short_id(x: Any, n: int = 8) -> str:
-    if not isinstance(x, str):
-        return "-"
-    x = x.strip()
-    return x[:n] if x else "-"
-
 
 def flatten_unit(u: Any, prefix: str) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
@@ -96,28 +65,6 @@ def _as_points(v: Any) -> List[Tuple[float, float]]:
             pts.append(p)
     return pts
 
-
-def to_float(x: Any) -> float | None:
-    if x is None:
-        return None
-    if isinstance(x, (int, float)):
-        return float(x)
-    s = str(x).strip()
-    if not s:
-        return None
-    try:
-        return float(s)
-    except Exception:
-        return None
-
-def safe_div(num: float | None, den: float | None) -> float | None:
-    if num is None or den is None:
-        return None
-    if den == 0:
-        return None
-    return num / den
-
-
 def majority_winner(s: Dict[str, Any]) -> str:
     """trials 요약에서 다수결 승자 라벨."""
     try:
@@ -143,13 +90,9 @@ def export_csv(records: List[Dict[str, Any]], out_path: str, kinds: List[str], m
     rows: List[Dict[str, Any]] = []
     stats = defaultdict(int)
 
-    def _perk_slots(perks: list[str]) -> dict:
-    # perks 리스트의 0/1/2번째를 3/6/10 슬롯으로 매핑(없으면 빈 문자열)
-        return {
-            "perk_3": perks[0] if len(perks) >= 1 else "",
-            "perk_6": perks[1] if len(perks) >= 2 else "",
-            "perk_10": perks[2] if len(perks) >= 3 else "",
-        }
+    # perk 목록을 고정 컬럼으로 쓰기 위해 catalog에서 id를 확정
+    perk_catalog = load_perk_catalog()
+    perk_ids = sorted(perk_catalog.keys())
 
     for r in records:
         kind = r.get("kind", "unknown")
@@ -230,6 +173,26 @@ def export_csv(records: List[Dict[str, Any]], out_path: str, kinds: List[str], m
         row.update(flatten_unit(s.get("attacker_unit"), "a_"))
         row.update(flatten_unit(s.get("defender_unit"), "d_"))
 
+        # ===== perk features (count + one-hot) =====
+        a_unit = s.get("attacker_unit") if isinstance(s.get("attacker_unit"), dict) else {}
+        d_unit = s.get("defender_unit") if isinstance(s.get("defender_unit"), dict) else {}
+
+        a_perks = a_unit.get("perks") or []
+        d_perks = d_unit.get("perks") or []
+        a_set = set(a_perks) if isinstance(a_perks, list) else set()
+        d_set = set(d_perks) if isinstance(d_perks, list) else set()
+
+        row["a_perk_count"] = len(a_set)
+        row["d_perk_count"] = len(d_set)
+        row["perk_count_adv"] = len(a_set) - len(d_set)
+
+        for pid in perk_ids:
+            a_has = 1 if pid in a_set else 0
+            d_has = 1 if pid in d_set else 0
+            row[f"a_has_perk_{pid}"] = a_has
+            row[f"d_has_perk_{pid}"] = d_has
+            row[f"perk_adv_{pid}"] = a_has - d_has
+
         # ===== group key (for Group Split) =====
         # a_name / d_name 컬럼은 flatten_unit(UNIT_KEYS에 name 포함)로 이미 생성됨
         a_name = row.get("a_name")
@@ -293,7 +256,10 @@ def export_csv(records: List[Dict[str, Any]], out_path: str, kinds: List[str], m
         "attacker_pos", "defender_pos", "start_distance", "encounter_type", "defender_count",
         *[f"a_{k}" for k in UNIT_KEYS],
         *[f"d_{k}" for k in UNIT_KEYS],
-
+        "a_perk_count", "d_perk_count", "perk_count_adv",
+        *[f"a_has_perk_{pid}" for pid in perk_ids],
+        *[f"d_has_perk_{pid}" for pid in perk_ids],
+        *[f"perk_adv_{pid}" for pid in perk_ids],
         "a_dps", "d_dps",
         "a_ttk_est", "d_ttk_est",
         "dps_adv", "range_adv", "ttk_adv",

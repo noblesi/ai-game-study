@@ -6,6 +6,8 @@ import random
 from collections import Counter
 from typing import Any, Dict, List, Tuple
 
+from common.parse import to_float
+
 # (1) base(퍼크 제외) - "x를 만드는 순서" 그대로 적어야 함
 BASE_FEATURE_NAMES = [
     # meta(3)  <<== x 맨 앞이 이 순서라면, 이름도 이 순서!
@@ -99,10 +101,6 @@ def build_features(row: Dict[str, Any]) -> Tuple[List[float], int] | None:
     # encounter_type (categorical) -> 0/1
     enc = str(row.get("encounter_type") or "duel").strip().lower()
     encounter_is_swarm = 1.0 if enc == "swarm" else 0.0
-
-    # meta 먼저 계산
-    encounter_type = (row.get("encounter_type") or "").strip().lower()
-    encounter_is_swarm = 1.0 if encounter_type == "swarm" else 0.0
 
     dc_raw = to_float(row.get("defender_count"))
     sd_raw = to_float(row.get("start_distance"))
@@ -973,37 +971,23 @@ def main() -> None:
     args = p.parse_args()
 
     train_path = (args.train.strip() if isinstance(args.train, str) else "") or args.input
-    rows = load_csv(args.input)
+    global PERK_IDS
+    rows = load_csv(train_path)
     PERK_IDS = detect_perk_ids(rows)
     rebuild_feature_schema()
-    # ===== perk 컬럼 자동 감지 + FEATURE_NAMES 확장 =====
-    global FEATURE_NAMES, NUM_KEYS
-
-    header_keys = list(rows[0].keys()) if rows else []
-    perk_ids = []
-    for k in header_keys:
-        if k.startswith("a_has_perk_"):
-            perk_ids.append(k[len("a_has_perk_"):])
-    PERK_IDS = sorted(set(perk_ids))
-
-    extra_feature_names = [
-        "encounter_is_swarm", "defender_count","start_distance",
-        "a_perk_count", "d_perk_count", "perk_count_adv"]
-    for pid in PERK_IDS:
-        extra_feature_names += [
-            f"a_has_perk_{pid}", f"d_has_perk_{pid}", f"perk_adv_{pid}"
-        ]
-
-    FEATURE_NAMES = list(BASE_FEATURE_NAMES) + extra_feature_names
-    # NUM_KEYS는 기존 BASE_NUM_KEYS 그대로 둬도 되고,
-    # 필요하면 perk_count를 여기에도 포함 가능(현재 build_features가 직접 읽어서 필수는 아님)
-    NUM_KEYS = list(BASE_NUM_KEYS)
 
     data: List[Tuple[List[float], int]] = []
     groups: List[str] = []
+    mismatch = 0
     for idx, row in enumerate(rows):
         item = build_features(row)
         if item is None:
+            continue
+        x, y = item
+        if len(x) != len(FEATURE_NAMES):
+            mismatch += 1
+            if mismatch <= 5:
+                print(f"[WARN] feature length mismatch at row {idx}: x={len(x)} names={len(FEATURE_NAMES)}")
             continue
 
         # group key 수집(없으면 a_name/d_name으로 fallback)
@@ -1018,8 +1002,11 @@ def main() -> None:
                 g = f"row_{idx}"
 
         data.append(item)
+        data.append((x, y))
         groups.append(g)
 
+    if mismatch:
+        print(f"[WARN] feature length mismatch rows skipped: {mismatch}")
     print(f"[INFO] input rows: {len(rows)}")
     print(f"[INFO] usable rows: {len(data)}")
 

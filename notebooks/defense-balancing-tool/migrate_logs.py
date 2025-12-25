@@ -16,37 +16,13 @@ import os
 import uuid
 from typing import Any, Dict, List, Tuple
 
-
 LOG_SCHEMA_VERSION = "v1"
+
+from common.jsonl import read_jsonl
 
 
 def now_iso() -> str:
     return datetime.datetime.now().isoformat(timespec="seconds")
-
-
-def read_jsonl(path: str) -> Tuple[List[Dict[str, Any]], List[str]]:
-    records: List[Dict[str, Any]] = []
-    errors: List[str] = []
-
-    if not os.path.exists(path):
-        return records, [f"File not found: {path}"]
-
-    with open(path, "r", encoding="utf-8") as f:
-        for i, line in enumerate(f, start=1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                obj = json.loads(line)
-                if isinstance(obj, dict):
-                    records.append(obj)
-                else:
-                    errors.append(f"[L{i}] not an object (dict): {type(obj).__name__}")
-            except Exception as e:
-                errors.append(f"[L{i}] JSON parse error: {e}")
-
-    return records, errors
-
 
 def write_jsonl(path: str, records: List[Dict[str, Any]]) -> None:
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)

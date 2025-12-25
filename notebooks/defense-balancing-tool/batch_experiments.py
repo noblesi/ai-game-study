@@ -6,11 +6,20 @@ import uuid
 
 from unit_io import load_units_from_file
 from battle_sim import simulate_duel, simulate_duel_2d, build_experiment_summary, run_swarm_trials_2d
-from utils import append_jsonl
-
+from common.jsonl import append_jsonl
+from common.perk import set_level_linear, auto_assign_perks, load_perk_catalog
 
 LOG_SCHEMA_VERSION = "v1"
 
+def _clone_with_level(base, level: int):
+    u = type(base).from_dict(base.to_dict())
+    level = max(1, int(level))
+    if level != u.level:
+        delta = level - u.level
+        u.hp += u.hp_per_level * delta
+        u.atk += u.atk_per_level * delta
+        u.level = level
+    return u
 
 def main() -> None:
     p = argparse.ArgumentParser()
@@ -24,6 +33,11 @@ def main() -> None:
     p.add_argument("--pos-range", type=float, default=8.0, help="(2D) 랜덤 좌표 범위 (+/-)")
     p.add_argument("--defender-counts", default="3,5,8", help="(swarm) defender_count 후보들(예: 3,5,8)")
     p.add_argument("--defender-spread", type=float, default=None, help="(swarm) meta로 남길 spread 값(근사 시뮬에는 영향 없음)")
+    p.add_argument("--auto-perks", action="store_true", help="레벨(3/6/10) 기준으로 perk를 자동 부여")
+    p.add_argument("--perk-seed", type=int, default=42, help="(auto-perks) perk 랜덤 시드")
+    p.add_argument("--perk-overwrite", action="store_true", help="(auto-perks) 기존 perks를 무시하고 새로 채우기")
+    p.add_argument("--level-min", type=int, default=None, help="(선택) 유닛 레벨 랜덤 최소값(지정 시 level-max도 필요)")
+    p.add_argument("--level-max", type=int, default=None, help="(선택) 유닛 레벨 랜덤 최대값")
     args = p.parse_args()
 
     units = load_units_from_file()
@@ -32,6 +46,20 @@ def main() -> None:
         return
 
     rnd = random.Random(args.seed)
+    # perk catalog / rng (optional)
+    perk_catalog = load_perk_catalog() if args.auto_perks else {}
+    perk_rnd = random.Random(args.perk_seed) if args.auto_perks else None
+
+    # optional random level settings
+    level_min = args.level_min
+    level_max = args.level_max
+    if (level_min is None) != (level_max is None):
+        print("[WARN] --level-min/--level-max는 둘 다 지정해야 합니다. 랜덤 레벨을 무시합니다.") 
+        level_min = None
+        level_max = None
+    if level_min is not None and level_max is not None and level_min > level_max:
+        level_min, level_max = level_max, level_min
+
     session_run_id = str(uuid.uuid4())
     if args.encounter == "swarm":
         if args.mode != "2":
@@ -70,6 +98,9 @@ def main() -> None:
 
     made = 0
     while made < target_pairs:
+
+
+
         ai = rnd.randrange(len(units))
         di = rnd.randrange(len(units))
         if ai == di:
@@ -85,6 +116,19 @@ def main() -> None:
 
         attacker = units[ai]
         defender = units[di]
+        # NOTE: 원본 units 리스트를 오염시키지 않도록 반드시 복제해서 사용
+        attacker = type(units[ai]).from_dict(units[ai].to_dict())
+        defender = type(units[di]).from_dict(units[di].to_dict())
+
+        # (선택) 레벨 랜덤화
+        if level_min is not None and level_max is not None:
+            set_level_linear(attacker, rnd.randint(level_min, level_max))
+            set_level_linear(defender, rnd.randint(level_min, level_max))
+
+        # (선택) perk 자동 부여
+        if args.auto_perks and perk_rnd is not None:
+            auto_assign_perks(attacker, perk_catalog, args.encounter, perk_rnd, overwrite=args.perk_overwrite)
+            auto_assign_perks(defender, perk_catalog, args.encounter, perk_rnd, overwrite=args.perk_overwrite)
 
         # swarm은 run_swarm_trials_2d(...)가 요약까지 만들어줌
         if args.encounter == "swarm":
@@ -174,6 +218,10 @@ def main() -> None:
             "engine": engine,
             "run_id": session_run_id,
             "spec_source": "units_runtime",
+            "auto_perks": bool(args.auto_perks),
+            "perk_seed": int(args.perk_seed),
+            "level_min": args.level_min,
+            "level_max": args.level_max,
             "pair_index": made + 1,
             "summary": summary,
         }

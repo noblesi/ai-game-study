@@ -16,7 +16,8 @@ import math
 import uuid
 from typing import List, Optional, Tuple
 from unit_model import Unit
-from utils import input_int, input_non_empty, select_from_list, confirm_yes_no, append_jsonl
+from common.cli import input_int, input_non_empty, select_from_list, confirm_yes_no
+from common.jsonl import append_jsonl
 from battle_sim import (
     simulate_duel,
     simulate_duel_2d,
@@ -27,7 +28,7 @@ from battle_sim import (
     run_duel_trials_2d,
     run_swarm_trials_2d,
 )
-from perk_io import load_perk_catalog
+from common.perk import load_perk_catalog
 
 from scenario_loader import load_scenarios_from_markdown
 

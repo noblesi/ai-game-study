@@ -7,21 +7,7 @@ import argparse, datetime, json, os
 from collections import defaultdict
 from typing import Any, Dict, List, Tuple
 
-def read_jsonl(path: str) -> Tuple[List[Dict[str, Any]], List[str]]:
-    records: List[Dict[str, Any]] = []
-    errors: List[str] = []
-    if not os.path.exists(path):
-        return records, [f"File not found: {path}"]
-    with open(path, "r", encoding="utf-8") as f:
-        for i, line in enumerate(f, start=1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                records.append(json.loads(line))
-            except json.JSONDecodeError as e:
-                errors.append(f"Line {i}: JSONDecodeError {e.msg} (col {e.colno})")
-    return records, errors
+from common.jsonl import read_jsonl, schema_of, short_id
 
 def fmt_pct(x: Any) -> str:
     if x is None:
@@ -56,16 +42,6 @@ def parse_dt(x: str) -> datetime.datetime:
         return datetime.datetime.fromisoformat(x)
     except Exception:
         return datetime.datetime.min
-    
-def schema_of(r: Dict[str, Any]) -> str:
-    v = r.get("schema_version")
-    return v if isinstance(v, str) and v.strip() else "legacy"
-
-def short_id(x: Any, n: int = 8) -> str:
-    if not isinstance(x, str):
-        return "-"
-    x = x.strip()
-    return x[:n] if x else "-"
 
 def write_report(records: List[Dict[str, Any]], errors: List[str], out_path: str, recent_n: int) -> None:
     os.makedirs(os.path.dirname(out_path), exist_ok=True)

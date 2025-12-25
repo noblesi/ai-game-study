@@ -72,15 +72,27 @@ def _effective_combat_stats(unit: Unit, context: str) -> dict:
     move_speed = float(unit.move_speed)
     rng = float(unit.range)
 
+    # stat perks
     if "shield" in perks:
         hp *= 1.2
-
     if "rapid" in perks:
         attack_speed *= 1.2
+    if "fury" in perks:
+        atk *= 1.15
+    if "haste" in perks:
+        move_speed *= 1.2
 
+    # duel only
     if context == "duel" and "duelist" in perks:
-        atk *= 1.1
-        attack_speed *= 1.1
+        atk *= 1.15
+
+    # ranged only
+    atk_type = (unit.attack_type or "").lower()
+    if "longshot" in perks and atk_type != "melee":
+        rng += 1.0
+
+    # defensive
+    dmg_taken_mul = 0.9 if "armor" in perks else 1.0
 
     # 기본값으로는 정수 스탯을 유지하되, 내부 연산은 float로
     return {
@@ -89,22 +101,21 @@ def _effective_combat_stats(unit: Unit, context: str) -> dict:
         "attack_speed": attack_speed,
         "move_speed": move_speed,
         "range": rng,
+        "dmg_taken_mul": dmg_taken_mul,
         "perks": perks,
     }
 
 
 def _apply_on_hit(attacker_perks: List[str], damage: float, attacker_hp: float, attacker_max_hp: float) -> float:
-    """lifesteal 등 '적중 시' 효과를 반영해서 attacker_hp를 갱신."""
     if "lifesteal" in attacker_perks:
-        heal = max(0.0, damage * 0.2)
+        heal = max(0.0, damage * 0.10)  # desc와 일치
         attacker_hp = min(attacker_hp + heal, attacker_max_hp)
     return attacker_hp
 
-
 def _maybe_execute(attacker_perks: List[str], target_hp_after: float, target_max_hp: float, base_damage: float) -> float:
-    """execute: 타깃 HP가 30% 이하로 내려가면 피해를 1.5배로."""
+    # "HP 25% 이하로 떨어지면 피해 1.5배"
     if "execute" in attacker_perks and target_max_hp > 0:
-        if target_hp_after <= 0.3 * target_max_hp:
+        if target_hp_after <= 0.25 * target_max_hp:
             return base_damage * 1.5
     return base_damage
 

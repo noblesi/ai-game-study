@@ -1,35 +1,16 @@
 {
-  "version": 1,
+  "version": 2,
   "perks": {
-    "shield": {
-      "name": "Shield",
-      "tags": ["all"],
-      "desc": "최대 HP +20%"
-    },
-    "rapid": {
-      "name": "Rapid",
-      "tags": ["all"],
-      "desc": "공격속도 +20%"
-    },
-    "duelist": {
-      "name": "Duelist",
-      "tags": ["duel"],
-      "desc": "1v1에서 공격력 +15%"
-    },
-    "lifesteal": {
-      "name": "LifeSteal",
-      "tags": ["duel", "swarm"],
-      "desc": "공격 시 피해량의 10% 회복"
-    },
-    "execute": {
-      "name": "Execute",
-      "tags": ["duel"],
-      "desc": "상대 HP 25% 이하 추가 피해"
-    },
-    "cleave": {
-      "name": "Cleave",
-      "tags": ["swarm"],
-      "desc": "1vN에서 주변 적에게 50% 스플래시"
-    }
+    "shield":  { "name": "Shield",   "tags": ["all"],  "desc": "최대 HP +20%" },
+    "rapid":   { "name": "Rapid",    "tags": ["all"],  "desc": "공격속도 +20%" },
+    "duelist": { "name": "Duelist",  "tags": ["duel"], "desc": "1v1에서 공격력 +15%" },
+    "lifesteal":{ "name":"LifeSteal","tags":["duel","swarm"], "desc":"공격 시 피해량의 10% 회복" },
+    "execute": { "name": "Execute",  "tags": ["duel"], "desc": "상대 HP 25% 이하로 떨어지면 피해 1.5배" },
+    "cleave":  { "name": "Cleave",   "tags": ["swarm"],"desc": "1vN에서 주변 적에게 50% 스플래시" },
+
+    "fury":    { "name": "Fury",     "tags": ["all"],  "desc": "공격력 +15%" },
+    "haste":   { "name": "Haste",    "tags": ["all"],  "desc": "이동속도 +20%" },
+    "armor":   { "name": "Armor",    "tags": ["all"],  "desc": "받는 피해 -10%" },
+    "longshot":{ "name": "Longshot", "tags": ["all"],  "desc": "(원거리) 사거리 +1" }
   }
 }
