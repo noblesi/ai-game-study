@@ -153,17 +153,121 @@ def build_features(row: Dict[str, Any]) -> Tuple[List[float], int] | None:
     return x, y
 
 
-def split_xy(data: List[Tuple[List[float], int]], test_ratio: float, seed: int) -> Tuple[List, List]:
+def split_xy(data, test_ratio: float, seed: int):
+    # 항상 (train, test)를 반환하도록 보장하는 안전 버전
+    if data is None:
+        return [], []
+    n = len(data)
+    if n < 2:
+        return data[:], []
+
+    # test_ratio 안전 보정
+    if test_ratio is None:
+        test_ratio = 0.2
+    test_ratio = float(test_ratio)
+    if test_ratio <= 0.0:
+        return data[:], []
+    if test_ratio >= 1.0:
+        return [], data[:]
+
     rnd = random.Random(seed)
-    data2 = data[:]
-    rnd.shuffle(data2)
-    n_test = max(1, int(len(data2) * test_ratio))
-    test = data2[:n_test]
-    train = data2[n_test:]
+    idx = list(range(n))
+    rnd.shuffle(idx)
+
+    n_test = int(round(n * test_ratio))
+    # train/test 둘 다 비지 않게 clamp
+    n_test = max(1, min(n - 1, n_test))
+
+    test_idx = set(idx[:n_test])
+    test = [data[i] for i in range(n) if i in test_idx]
+    train = [data[i] for i in range(n) if i not in test_idx]
     return train, test
+
+    
+    
+def _split_indices(n: int, test_ratio: float, seed: int) -> tuple[list[int], list[int]]:
+    rnd = random.Random(seed)
+    idx = list(range(n))
+    rnd.shuffle(idx)
+    n_test = max(1, int(n * test_ratio))
+    test_idx = idx[:n_test]
+    train_idx = idx[n_test:]
+    return train_idx, test_idx
+
+import json
+
+def fit_final_estimator(
+    model_name: str,
+    X: List[List[float]],
+    y: List[int],
+    *,
+    seed: int,
+    rf_params: Dict[str, Any] | None = None,
+):
+    if model_name in ("LR", "LR_balanced"):
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.preprocessing import StandardScaler
+        from sklearn.pipeline import Pipeline
+
+        cw = None if model_name == "LR" else "balanced"
+        clf = Pipeline([
+            ("scaler", StandardScaler()),
+            ("lr", LogisticRegression(max_iter=400, class_weight=cw)),
+        ])
+        clf.fit(X, y)
+        return clf
+
+    if model_name == "DT_balanced":
+        from sklearn.tree import DecisionTreeClassifier
+        clf = DecisionTreeClassifier(class_weight="balanced", random_state=seed)
+        clf.fit(X, y)
+        return clf
+
+    if model_name == "RF_balanced_subsample":
+        from sklearn.ensemble import RandomForestClassifier
+        params = rf_params or {}
+        clf = RandomForestClassifier(
+            n_estimators=int(params.get("n_estimators", 200)),
+            max_depth=params.get("max_depth", None),
+            min_samples_leaf=int(params.get("min_samples_leaf", 1)),
+            class_weight=params.get("class_weight", "balanced_subsample"),
+            random_state=seed,
+            n_jobs=-1,
+        )
+        clf.fit(X, y)
+        return clf
+
+    return None
+
+
+def save_bundle(
+    model,
+    *,
+    model_path: str,
+    meta_path: str,
+    feature_names: List[str],
+    perk_ids: List[str],
+    threshold: float,
+    group_key: str,
+):
+    import joblib
+    os.makedirs(os.path.dirname(model_path) or ".", exist_ok=True)
+    joblib.dump(model, model_path)
+
+    meta = {
+        "threshold": threshold,
+        "group_key": group_key,
+        "feature_names": feature_names,
+        "perk_ids": perk_ids,
+    }
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
+
 
 import os
 import datetime
+import joblib
+import re
 from typing import Optional
 
 def _cm_from_preds(y_true: List[int], y_pred: List[int]) -> List[List[int]]:
@@ -228,9 +332,20 @@ def _fmt_cm(cm: List[List[int]]) -> str:
     fn, tp = cm[1]
     return f"TN={tn} FP={fp} FN={fn} TP={tp}"
 
-def _default_report_path() -> str:
+def _sanitize_filename(s: str, max_len: int = 40) -> str:
+    s = (s or "").strip()
+    if not s:
+        return "na"
+    s = re.sub(r"[^0-9a-zA-Z._-]+", "-", s)
+    s = re.sub(r"-{2,}", "-", s).strip("-")
+    return s[:max_len]
+
+def _default_report_path(split_mode: str, group_key: str) -> str:
     ts = datetime.datetime.now().strftime("%Y%m%d")
-    return os.path.join("reports", f"baseline_eval_{ts}.md")
+    tail = (split_mode or "random").lower()
+    if tail == "group":
+        tail += "_" + _sanitize_filename(group_key)
+    return os.path.join("reports", f"baseline_eval_{ts}_{tail}.md")
 
 
 def fit_predict_lr(train, test, class_weight=None, seed: int = 0) -> Optional[List[int]]:
@@ -959,6 +1074,12 @@ def main() -> None:
 
     p.add_argument("--rf-grid", action="store_true",
                    help="RF 미니 그리드 탐색(max_depth/min_samples_leaf) + threshold 재튜닝(=F1 최대)")
+    p.add_argument("--save-model", default="", help="path to save final trained model (joblib). empty = no save")
+    p.add_argument("--final-model", default="BEST",
+                    choices=["BEST","LR","LR_balanced","DT_balanced","RF_balanced_subsample"],
+                    help="which model to train for final save (BEST=use selected best model)")
+    p.add_argument("--final-threshold", type=float, default=None,
+                    help="override threshold for saved model. default=None uses tuned best threshold if available else 0.5")
     p.add_argument("--rf-depths", default="None,8,12",
                    help="RF max_depth 후보(콤마). 예: None,8,12")
     p.add_argument("--rf-min-leaves", default="1,2,4",
@@ -1002,7 +1123,6 @@ def main() -> None:
                 g = f"row_{idx}"
 
         data.append(item)
-        data.append((x, y))
         groups.append(g)
 
     if mismatch:
@@ -1117,6 +1237,7 @@ def main() -> None:
         print(f"[INFO] split mode: RANDOM seed_base={args.seed} test_ratio={args.test_ratio}")
 
     test_pos_rates: List[float] = []
+    overlap_test_group_rates: List[float] = []
 
     for i in range(K):
         split_seed = args.seed + i
@@ -1126,7 +1247,15 @@ def main() -> None:
             train = [data[j] for j in train_idx]
             test = [data[j] for j in test_idx]
         else:
-            train, test = split_xy(data, test_ratio=args.test_ratio, seed=split_seed)
+            train_idx, test_idx = _split_indices(len(data), test_ratio=args.test_ratio, seed=split_seed)
+            train = [data[j] for j in train_idx]
+            test = [data[j] for j in test_idx]
+
+            # RANDOM split이지만 group_key 관점에서 train/test가 얼마나 겹치는지(누수/과대평가 가능성) 참고 출력용
+            train_g = {groups[j] for j in train_idx}
+            test_g = {groups[j] for j in test_idx}
+            overlap = len(train_g & test_g)
+            overlap_test_group_rates.append(overlap / max(1, len(test_g)))
 
         X_test = [x for x, _ in test]
         y_test = [y for _, y in test]
@@ -1170,6 +1299,12 @@ def main() -> None:
     if test_pos_rates:
         s = _summ(test_pos_rates)
         print("[INFO] test_pos_rate (label=1) / SPLIT")
+        print(f"- mean={_fmt3(s['mean'])} min={_fmt3(s['min'])} max={_fmt3(s['max'])}")
+        print()
+
+    if split_mode == "random" and overlap_test_group_rates:
+        s = _summ(overlap_test_group_rates)
+        print("[INFO] group overlap (RANDOM split) / TEST groups")
         print(f"- mean={_fmt3(s['mean'])} min={_fmt3(s['min'])} max={_fmt3(s['max'])}")
         print()
 
@@ -1326,7 +1461,7 @@ def main() -> None:
                 print("[WARN] RF grid search produced no results (sklearn missing?).")
 
     # ---- 리포트 저장 ----
-    report_path = args.report.strip() or _default_report_path()
+    report_path = args.report.strip() or _default_report_path(split_mode, args.group_key)
     write_report_md(
         report_path,
         input_path=args.input,
@@ -1425,6 +1560,54 @@ def main() -> None:
 
 
     print(f"[OK] wrote report: {report_path}")
+
+    # ===== Final train & save (optional) =====
+    if args.save_model:
+        # 1) 모델 선택
+        chosen_name = best if args.final_model == "BEST" else args.final_model
+        if not chosen_name:
+            raise ValueError("final-model=BEST but no best model selected.")
+
+        # 2) threshold 선택 우선순위:
+        #    --final-threshold > (tuned가 있고, chosen_name==best면 tuned top1) > (RF grid best thr) > 0.5
+        chosen_thr = args.final_threshold
+        if chosen_thr is None:
+            if tuned and chosen_name == best:
+                chosen_thr = float(tuned[0][0])
+            elif chosen_name == "RF_balanced_subsample" and rf_grid_best_row and "thr" in rf_grid_best_row:
+                chosen_thr = float(rf_grid_best_row["thr"])
+            else:
+                chosen_thr = 0.5
+
+        # 3) 전체 데이터로 최종 재학습
+        X_all = [x for x, _ in data]
+        y_all = [y for _, y in data]
+
+        rf_params_for_save = rf_grid_params if chosen_name == "RF_balanced_subsample" else None
+        model = fit_final_estimator(
+            chosen_name,
+            X_all,
+            y_all,
+            seed=args.seed,
+            rf_params=rf_params_for_save,
+        )
+        if model is None:
+            raise ValueError(f"unsupported final model: {chosen_name}")
+
+        # 4) 모델+메타 저장(권장: model.joblib + meta.json)
+        meta_path = os.path.splitext(args.save_model)[0] + ".meta.json"
+        save_bundle(
+            model,
+            model_path=args.save_model,
+            meta_path=meta_path,
+            feature_names=FEATURE_NAMES,
+            perk_ids=PERK_IDS,
+            threshold=float(chosen_thr),
+            group_key=args.group_key,
+        )
+        print(f"[OK] saved model: {args.save_model}")
+        print(f"[OK] saved meta : {meta_path}")
+        print(f"[INFO] saved model_name={chosen_name} thr={float(chosen_thr):.2f} rows={len(data)}")
 
     # ===== Fixed Test Evaluation (optional) =====
     if isinstance(args.test, str) and args.test.strip():

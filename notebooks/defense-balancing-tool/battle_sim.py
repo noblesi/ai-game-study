@@ -42,12 +42,12 @@ def _can_attack_target(attacker: Unit, defender: Unit) -> bool:
     return atk_target == def_kind
 
 
-def _is_in_attack_range(attacker: Unit, defender: Unit, distance: float) -> bool:
+def _is_in_attack_range(attacker: Unit, effective_range: float, distance: float) -> bool:
     """공격 타입에 따라 사거리 판정."""
     atk_type = (attacker.attack_type or "").lower()
     if atk_type == "melee":
         return distance <= 1.0
-    return distance <= float(attacker.range)
+    return distance <= float(effective_range)
 
 
 # ============================
@@ -112,8 +112,10 @@ def _apply_on_hit(attacker_perks: List[str], damage: float, attacker_hp: float, 
         attacker_hp = min(attacker_hp + heal, attacker_max_hp)
     return attacker_hp
 
-def _maybe_execute(attacker_perks: List[str], target_hp_after: float, target_max_hp: float, base_damage: float) -> float:
+def _maybe_execute(attacker_perks: List[str], context: str, target_hp_after: float, target_max_hp: float, base_damage: float) -> float:
     # "HP 25% 이하로 떨어지면 피해 1.5배"
+    if (context or "").lower() != "duel":
+        return base_damage
     if "execute" in attacker_perks and target_max_hp > 0:
         if target_hp_after <= 0.25 * target_max_hp:
             return base_damage * 1.5
@@ -142,6 +144,10 @@ def simulate_duel(
     d_move = float(d_stats["move_speed"])
     a_perks = a_stats["perks"]
     d_perks = d_stats["perks"]
+    a_rng = float(a_stats["range"])
+    d_rng = float(d_stats["range"])
+    a_taken = float(a_stats["dmg_taken_mul"])
+    d_taken = float(d_stats["dmg_taken_mul"])
 
     if a_as <= 0 and d_as <= 0:
         if verbose:
@@ -168,14 +174,14 @@ def simulate_duel(
     eps = 1e-9
     max_steps = 10000
 
-    def _max_effective_range(u: Unit, eff_attack_speed: float) -> float:
+    def _max_effective_range(u: Unit, eff_attack_speed: float, eff_range: float) -> float:
         if eff_attack_speed <= 0:
             return 0.0
         if (u.attack_type or "").lower() == "melee":
             return 1.0
-        return float(u.range)
+        return float(eff_range)
 
-    max_range = max(_max_effective_range(attacker, a_as), _max_effective_range(defender, d_as))
+    max_range = max(_max_effective_range(attacker, a_as, a_rng), _max_effective_range(defender, d_as, d_rng))
     if rel_speed <= 0 and initial_distance > max_range:
         if verbose:
             print("서로 사거리 안에 들어갈 수 없어 전투가 발생하지 않습니다.")
@@ -209,10 +215,11 @@ def simulate_duel(
 
         # attacker attack
         if next_a <= next_event + eps:
-            if _can_attack_target(attacker, defender) and _is_in_attack_range(attacker, defender, distance):
+            if _can_attack_target(attacker, defender) and _is_in_attack_range(attacker, a_rng, distance):
                 base = a_atk
                 after = d_hp - base
-                dmg = _maybe_execute(a_perks, target_hp_after=after, target_max_hp=d_max_hp, base_damage=base)
+                dmg = _maybe_execute(a_perks, context="duel", target_hp_after=after, target_max_hp=d_max_hp, base_damage=base)
+                dmg *= d_taken
                 d_hp -= dmg
                 a_hp = _apply_on_hit(a_perks, damage=dmg, attacker_hp=a_hp, attacker_max_hp=a_max_hp)
                 a_attacks += 1
@@ -227,11 +234,11 @@ def simulate_duel(
 
         # defender attack
         if d_hp > 0 and next_d <= next_event + eps:
-            if _can_attack_target(defender, attacker) and _is_in_attack_range(defender, attacker, distance):
+            if _can_attack_target(defender, attacker) and _is_in_attack_range(defender, d_rng, distance):
                 base = d_atk
                 after = a_hp - base
-                dmg = _maybe_execute(d_perks, target_hp_after=after, target_max_hp=a_max_hp, base_damage=base)
-                a_hp -= dmg
+                dmg = _maybe_execute(d_perks, context="duel", target_hp_after=after, target_max_hp=a_max_hp, base_damage=base)
+                dmg *= a_taken
                 d_hp = _apply_on_hit(d_perks, damage=dmg, attacker_hp=d_hp, attacker_max_hp=d_max_hp)
                 d_attacks += 1
                 if verbose:
@@ -290,6 +297,10 @@ def simulate_duel_2d(
     d_move = float(d_stats["move_speed"])
     a_perks = a_stats["perks"]
     d_perks = d_stats["perks"]
+    a_rng = float(a_stats["range"])
+    d_rng = float(d_stats["range"])
+    a_taken = float(a_stats["dmg_taken_mul"])
+    d_taken = float(d_stats["dmg_taken_mul"])
 
     if a_as <= 0 and d_as <= 0:
         if verbose:
@@ -354,10 +365,11 @@ def simulate_duel_2d(
 
         # attacker attack
         if time + eps >= a_next:
-            if _can_attack_target(attacker, defender) and _is_in_attack_range(attacker, defender, distance):
+            if _can_attack_target(attacker, defender) and _is_in_attack_range(attacker, a_rng, distance):
                 base = a_atk
                 after = d_hp - base
-                dmg = _maybe_execute(a_perks, target_hp_after=after, target_max_hp=d_max_hp, base_damage=base)
+                dmg = _maybe_execute(a_perks, context="duel", target_hp_after=after, target_max_hp=d_max_hp, base_damage=base)
+                dmg *= d_taken
                 d_hp -= dmg
                 a_hp = _apply_on_hit(a_perks, damage=dmg, attacker_hp=a_hp, attacker_max_hp=a_max_hp)
                 a_attacks += 1
@@ -372,10 +384,11 @@ def simulate_duel_2d(
 
         # defender attack
         if d_hp > 0 and time + eps >= d_next:
-            if _can_attack_target(defender, attacker) and _is_in_attack_range(defender, attacker, distance):
+            if _can_attack_target(defender, attacker) and _is_in_attack_range(defender, d_rng, distance):
                 base = d_atk
                 after = a_hp - base
-                dmg = _maybe_execute(d_perks, target_hp_after=after, target_max_hp=a_max_hp, base_damage=base)
+                dmg = _maybe_execute(d_perks, context="duel", target_hp_after=after, target_max_hp=a_max_hp, base_damage=base)
+                dmg *= a_taken
                 a_hp -= dmg
                 d_hp = _apply_on_hit(d_perks, damage=dmg, attacker_hp=d_hp, attacker_max_hp=d_max_hp)
                 d_attacks += 1
@@ -437,6 +450,7 @@ def simulate_swarm_2d(
     a_move = float(a_stats["move_speed"])
     a_rng = float(a_stats["range"])
     a_perks = a_stats["perks"]
+    a_taken = float(a_stats["dmg_taken_mul"])
 
     # defender stats
     d_stats_list = [_effective_combat_stats(d, context="swarm") for d in defenders]
@@ -447,7 +461,7 @@ def simulate_swarm_2d(
     d_move = [float(s["move_speed"]) for s in d_stats_list]
     d_rng = [float(s["range"]) for s in d_stats_list]
     d_perks = [s["perks"] for s in d_stats_list]
-
+    d_taken = [float(s["dmg_taken_mul"]) for s in d_stats_list]
     # positions
     if defender_positions is None:
         # 기본: 공격자 기준 오른쪽에 살짝 퍼뜨려 배치
@@ -533,7 +547,8 @@ def simulate_swarm_2d(
                 if dist_t <= a_rng:
                     base = a_atk
                     after = d_hp[target_i] - base
-                    dmg = _maybe_execute(a_perks, target_hp_after=after, target_max_hp=d_max_hp[target_i], base_damage=base)
+                    dmg = _maybe_execute(a_perks, context="swarm", target_hp_after=after, target_max_hp=d_max_hp[target_i], base_damage=base)
+                    dmg *= d_taken[target_i]
                     d_hp[target_i] -= dmg
                     a_hp = _apply_on_hit(a_perks, damage=dmg, attacker_hp=a_hp, attacker_max_hp=a_max_hp)
                     a_attacks += 1
@@ -550,7 +565,7 @@ def simulate_swarm_2d(
 
                             splash_i = min(others, key=_dist_to_target)
                             if _dist_to_target(splash_i) <= 1.5:
-                                splash = max(1.0, dmg * 0.5)
+                                splash = max(1.0, dmg * 0.5) * d_taken[splash_i]
                                 d_hp[splash_i] -= splash
 
                     a_cd = 1.0 / a_as
@@ -566,7 +581,8 @@ def simulate_swarm_2d(
             if dist_a <= d_rng[i]:
                 base = d_atk[i]
                 after = a_hp - base
-                dmg = _maybe_execute(d_perks[i], target_hp_after=after, target_max_hp=a_max_hp, base_damage=base)
+                dmg = _maybe_execute(d_perks[i], context="swarm", target_hp_after=after, target_max_hp=a_max_hp, base_damage=base)
+                dmg *= a_taken
                 a_hp -= dmg
                 d_hp[i] = _apply_on_hit(d_perks[i], damage=dmg, attacker_hp=d_hp[i], attacker_max_hp=d_max_hp[i])
                 d_attacks += 1

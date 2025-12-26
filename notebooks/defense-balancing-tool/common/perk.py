@@ -61,9 +61,17 @@ def load_perk_catalog(path: str = "perks.json") -> Dict[str, Dict[str, Any]]:
             continue
         if not isinstance(meta, dict):
             meta = {}
+        tags_raw = meta.get("tags", [])
+        if tags_raw is None:
+            tags = []
+        elif isinstance(tags_raw, (list, tuple, set)):
+            tags = [str(t) for t in tags_raw]
+        else:
+            tags = [str(tags_raw)]
+
         out[perk_id] = {
             "name": str(meta.get("name", perk_id)),
-            "tags": list(meta.get("tags" or [])),
+            "tags": tags,
             "desc": str(meta.get("desc", "")),
         }
     return out if out else dict(_FALLBACK)

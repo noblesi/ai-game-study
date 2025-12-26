@@ -53,6 +53,24 @@ def _as_point(v: Any) -> Tuple[float, float] | None:
         return (x, y)
     return None
 
+def _perk_sig(perks: Any) -> str:
+    """perks(list[str]) -> signature 문자열(정렬 + 중복제거)."""
+    if not isinstance(perks, list):
+        return "none"
+    uniq = sorted({str(p).strip() for p in perks if str(p).strip()})
+    return "+".join(uniq) if uniq else "none"
+
+def _dist_bucket(dist: Any, step: float = 1.0) -> str:
+    """start_distance를 버킷 문자열로 변환(연속값 유사 샘플을 묶기 위함)."""
+    d = to_float(dist)
+    if d is None:
+        return "na"
+    if step <= 0:
+        step = 1.0
+    try:
+        return str(int(d // step))
+    except Exception:
+        return "na"
 
 def _as_points(v: Any) -> List[Tuple[float, float]]:
     """스웜 defender_pos처럼 좌표 리스트를 [(x,y),...]로 변환."""
@@ -201,8 +219,22 @@ def export_csv(records: List[Dict[str, Any]], out_path: str, kinds: List[str], m
             encounter = str(row.get("encounter_type") or "duel").lower()
             count = row.get("defender_count")
             row["pair_key"] = f"{a_name.strip()}__vs__{d_name.strip()}__{encounter}__x{count}"
+
+            # 더 강한(세분화된) 그룹키: 레벨/퍼크/거리버킷까지 포함
+            a_lv = row.get("a_level")
+            d_lv = row.get("d_level")
+            a_sig = _perk_sig(a_perks)
+            d_sig = _perk_sig(d_perks)
+            dist_b = _dist_bucket(row.get("start_distance"), step=1.0)
+            row["pair_key_full"] = (
+                f"{a_name.strip()}@L{d_lv}|{a_sig}"
+                f"__vs__"
+                f"{d_name.strip()}@L{d_lv}|{d_sig}"
+                f"__{encounter}__x{count}__dist{dist_b}"
+            )
         else:
             row["pair_key"] = None
+            row["pair_key_full"] = None
 
         # ===== derived features (DPS/TTK/Adv) =====
         a_hp = to_float(row.get("a_hp"))
@@ -251,6 +283,7 @@ def export_csv(records: List[Dict[str, Any]], out_path: str, kinds: List[str], m
         "logged_at", "schema_version", "kind", "engine", "run_id", "run_id_short", "spec_source",
         "scenario_title", "scenario_source",
         "pair_key",
+        "pair_key_full",
         "trials", "wins_attacker", "wins_defender", "draws", "no_result",
         "attacker_win_rate", "defender_win_rate", "draw_rate", "no_result_rate", "avg_time",
         "attacker_pos", "defender_pos", "start_distance", "encounter_type", "defender_count",
@@ -271,7 +304,7 @@ def export_csv(records: List[Dict[str, Any]], out_path: str, kinds: List[str], m
         w = csv.DictWriter(f, fieldnames=fieldnames)
         w.writeheader()
         for row in rows:
-            w.writerow(row)
+            w.writerow({k: row.get(k, None) for k in fieldnames})
 
     print(f"[OK] wrote: {out_path} (rows={len(rows)})")
     if stats:
