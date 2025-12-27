@@ -227,7 +227,7 @@ def export_csv(records: List[Dict[str, Any]], out_path: str, kinds: List[str], m
             d_sig = _perk_sig(d_perks)
             dist_b = _dist_bucket(row.get("start_distance"), step=1.0)
             row["pair_key_full"] = (
-                f"{a_name.strip()}@L{d_lv}|{a_sig}"
+                f"{a_name.strip()}@L{a_lv}|{a_sig}"
                 f"__vs__"
                 f"{d_name.strip()}@L{d_lv}|{d_sig}"
                 f"__{encounter}__x{count}__dist{dist_b}"

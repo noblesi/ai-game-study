@@ -10,7 +10,13 @@ param(
   [double]$PosRange = 8.0,
   [string]$DefenderCounts = "3,5,8",
   [string]$ExperimentsLog = "logs/experiments.jsonl",
-  [string]$ScenariosLog = "logs/scenarios.jsonl"
+  [string]$ScenariosLog = "logs/scenarios.jsonl",
+  [switch]$AppendExperiments = $false, # 기본은 재현성을 위해 experiments 로그를 매번 리셋
+
+  # (포트폴리오) 모델 산출물 저장
+  [switch]$SaveModel = $true,
+  [string]$ModelPath = "models/baseline.joblib",
+  [string]$ModelMeta = "models/meta.json"
 )
 
 $ErrorActionPreference = "Stop"
@@ -18,14 +24,40 @@ $ErrorActionPreference = "Stop"
 function Run($cmd) {
   Write-Host ">> $cmd"
   Invoke-Expression $cmd
+  if ($LASTEXITCODE -ne 0){
+    throw "Command failed (exit=$LASTEXITCODE): $cmd"
+  }
+}
+
+function Ensure-V1($path){
+  Write-Host "[CHECK] validate v1: $path"
+  try {
+    Run "python validate_logs.py --input `"$path`" --strict-v1"
+  } catch {
+    Write-Host "[WARN] strict v1 validation failed. Trying migrate -> revalidate: $path"
+    Run "python migrate_logs.py --input `"$path`" --inplace"
+    Run "python validate_logs.py --input `"$path`" --strict-v1"
+  }
 }
 
 Write-Host "[STEP 0] ensure dirs"
 New-Item -ItemType Directory -Force -Path "logs" | Out-Null
 New-Item -ItemType Directory -Force -Path "datasets" | Out-Null
 New-Item -ItemType Directory -Force -Path "reports" | Out-Null
+New-Item -ItemType Directory -Force -Path "models" | Out-Null
 
-Write-Host "[STEP 1] append experiments (duel + swarm)"
+Write-Host "[STEP 1] generate scenario preset log (reset each run)"
+Run "python batch_scenarios.py --out `"$ScenariosLog`" --reset"
+
+Write-Host "[STEP 2] experiments log setup"
+if (-not $AppendExperiments) {
+  if (Test-Path $ExperimentsLog) {
+    Write-Host ">> reset: $ExperimentsLog"
+    Clear-Content $ExperimentsLog
+  }
+}
+
+Write-Host "[STEP 3] append experiments (duel + swarm)"
 for ($i = 0; $i -lt $Seeds; $i++) {
   $seed = $BaseSeed + $i
   $perkSeed = 10000 + $seed
@@ -40,14 +72,26 @@ for ($i = 0; $i -lt $Seeds; $i++) {
   Run "python batch_experiments.py --encounter swarm --mode 2 --pairs $SwarmPairs --trials $Trials --seed $seed --out `"$ExperimentsLog`" $posFlags --defender-counts `"$DefenderCounts`" --auto-perks --perk-seed $($perkSeed+1) --perk-overwrite --level-min $LevelMin --level-max $LevelMax"
 }
 
-Write-Host "[STEP 2] export train/test datasets"
+Write-Host "[STEP 4] migrate/validate logs (strict v1)"
+Ensure-V1 $ScenariosLog
+Ensure-V1 $ExperimentsLog
+
+Write-Host "[STEP 5] generate scenario report"
+Run "python analyze_logs.py --input `"$ScenariosLog`" --output reports/scenario_report.md --recent 5 --top 5"
+
+Write-Host "[STEP 6] export train/test datasets"
 Run "python export_dataset.py --input `"$ExperimentsLog`" --kinds auto_experiment --output datasets/train_experiments_v1.csv"
 Run "python export_dataset.py --input `"$ScenariosLog`"   --kinds scenario_preset --output datasets/test_scenarios_v1.csv"
 
 # (선택) 전체 합본 CSV도 갱신하고 싶으면 주석 해제
 # Run "python export_dataset.py --input `"$ScenariosLog`" --input `"$ExperimentsLog`" --kinds scenario_preset,auto_experiment --output datasets/battle_dataset_v1.csv"
 
-Write-Host "[STEP 3] baseline eval (group=pair_key_full + fixed test + RF grid)"
-Run "python train_baseline.py --train datasets/train_experiments_v1.csv --test datasets/test_scenarios_v1.csv --k 10 --group --group-key pair_key_full --group-stratified --drop-overlap-groups --tune-threshold --rf-grid"
+Write-Host "[STEP 7] baseline eval (group=pair_key_full + fixed test + RF grid)"
+$saveFlags = ""
+if ($SaveModel) {
+  $saveFlags = "--save-model `"$ModelPath`" --save-meta `"$ModelMeta`" --final-model BEST"
+}
+
+Run "python train_baseline.py --train datasets/train_experiments_v1.csv --test datasets/test_scenarios_v1.csv --k 10 --group --group-key pair_key_full --group-stratified --drop-overlap-groups --tune-threshold --rf-grid $saveFlags"
 
 Write-Host "[OK] pipeline done."

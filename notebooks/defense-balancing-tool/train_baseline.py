@@ -194,8 +194,6 @@ def _split_indices(n: int, test_ratio: float, seed: int) -> tuple[list[int], lis
     train_idx = idx[n_test:]
     return train_idx, test_idx
 
-import json
-
 def fit_final_estimator(
     model_name: str,
     X: List[List[float]],
@@ -245,27 +243,43 @@ def save_bundle(
     *,
     model_path: str,
     meta_path: str,
+    model_name: str,
     feature_names: List[str],
     perk_ids: List[str],
     threshold: float,
     group_key: str,
-):
-    import joblib
+    rf_params: Dict[str, Any] | None = None,
+    train_path: str = "",
+    test_path: str = "",
+) -> None:
+    """모델(joblib) + 메타(JSON)를 함께 저장.
+
+    - model_path: joblib 파일 경로
+    - meta_path : 메타 JSON 경로(threshold/feature/perk 등)
+    """
     os.makedirs(os.path.dirname(model_path) or ".", exist_ok=True)
     joblib.dump(model, model_path)
 
     meta = {
-        "threshold": threshold,
+        "schema_version": "model_bundle_v1",
+        "created_at": datetime.datetime.now().isoformat(timespec="seconds"),
+        "model_name": model_name,
+        "threshold": float(threshold),
         "group_key": group_key,
+        "train_path": train_path,
+        "test_path": test_path,
+        "rf_params": rf_params or None,
         "feature_names": feature_names,
         "perk_ids": perk_ids,
     }
+    os.makedirs(os.path.dirname(meta_path) or ".", exist_ok=True)
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
 
 
 import os
 import datetime
+import json
 import joblib
 import re
 from typing import Optional
@@ -1075,6 +1089,7 @@ def main() -> None:
     p.add_argument("--rf-grid", action="store_true",
                    help="RF 미니 그리드 탐색(max_depth/min_samples_leaf) + threshold 재튜닝(=F1 최대)")
     p.add_argument("--save-model", default="", help="path to save final trained model (joblib). empty = no save")
+    p.add_argument("--save-meta", default="", help="path to save model meta (json). default: <save-model>.meta.json")
     p.add_argument("--final-model", default="BEST",
                     choices=["BEST","LR","LR_balanced","DT_balanced","RF_balanced_subsample"],
                     help="which model to train for final save (BEST=use selected best model)")
@@ -1595,15 +1610,23 @@ def main() -> None:
             raise ValueError(f"unsupported final model: {chosen_name}")
 
         # 4) 모델+메타 저장(권장: model.joblib + meta.json)
-        meta_path = os.path.splitext(args.save_model)[0] + ".meta.json"
+        meta_path = (
+            args.save_meta.strip()
+            if isinstance(args.save_meta, str) and args.save_meta.strip()
+            else os.path.splitext(args.save_model)[0] + ".meta.json"
+        )
         save_bundle(
             model,
             model_path=args.save_model,
             meta_path=meta_path,
+            model_name=chosen_name,
             feature_names=FEATURE_NAMES,
             perk_ids=PERK_IDS,
             threshold=float(chosen_thr),
             group_key=args.group_key,
+            rf_params=rf_params_for_save,
+            train_path=train_path,
+            test_path=(args.test.strip() if isinstance(args.test, str) else ""),
         )
         print(f"[OK] saved model: {args.save_model}")
         print(f"[OK] saved meta : {meta_path}")
