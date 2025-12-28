@@ -1,3 +1,4 @@
+notebooks/defense-balancing-tool/ReadMe.md
 notebooks/defense-balancing-tool/analyze_logs.py
 notebooks/defense-balancing-tool/archives/battle_scenarios_01.md
 notebooks/defense-balancing-tool/archives/battle_scenarios_02.md
@@ -62,6 +63,7 @@ notebooks/defense-balancing-tool/reports/baseline_traincv_perk_20251224.md
 notebooks/defense-balancing-tool/reports/baseline_traincv_thr_20251224.md
 notebooks/defense-balancing-tool/reports/scenario_report.md
 notebooks/defense-balancing-tool/reports/scenario_report_20251224.md
+notebooks/defense-balancing-tool/requirements.txt
 notebooks/defense-balancing-tool/run_pipeline.ps1
 notebooks/defense-balancing-tool/scenario_loader.py
 notebooks/defense-balancing-tool/train_baseline.py

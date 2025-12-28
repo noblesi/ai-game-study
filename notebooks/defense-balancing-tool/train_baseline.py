@@ -323,6 +323,49 @@ def _metrics_from_cm(cm: List[List[int]]) -> Dict[str, float]:
         "f1_1": f1_1,
     }
 
+def threshold_sweep_from_probas(
+    y_true: List[int],
+    probas_1: List[float],
+    *,
+    thr_step: float,
+    metric: str,
+) -> List[Tuple[float, Dict[str, float], List[List[int]]]]:
+    """단일 셋(y_true/proba_1)에 대해 threshold sweep.
+    FIXED_TEST 같은 고정 테스트에서 어떤 threshold가 좋은지 진단용.
+    """
+    if not y_true or not probas_1 or len(y_true) != len(probas_1):
+        return []
+
+    step = float(thr_step) if thr_step else 0.05
+    step = max(0.0005, min(0.5, step))
+
+    thresholds: List[float] = []
+    t = 0.0
+    while t < 1.0:
+        thresholds.append(round(t, 4))
+        t += step
+
+    # 자주 쓰는 기준점은 강제로 포함
+    for must in (0.05, 0.10, 0.20, 0.50, 0.65):
+        if must not in thresholds:
+            thresholds.append(must)
+    thresholds = sorted(set(thresholds))
+
+    scored: List[Tuple[float, Dict[str, float], List[List[int]]]] = []
+    for thr in thresholds:
+        y_pred = [1 if p >= thr else 0 for p in probas_1]
+        cm = _cm_from_preds(y_true, y_pred)
+        m = _metrics_from_cm(cm)
+        scored.append((thr, m, cm))
+
+    key = metric if metric in ("acc", "bal_acc", "f1_1", "recall_1", "precision_1") else "f1_1"
+    scored.sort(
+        key=lambda x: (x[1].get(key, 0.0), x[1].get("f1_1", 0.0), x[1].get("recall_1", 0.0)),
+        reverse=True,
+    )
+    return scored
+
+
 def _cm_add(a: List[List[int]], b: List[List[int]]) -> List[List[int]]:
     return [
         [a[0][0] + b[0][0], a[0][1] + b[0][1]],
@@ -479,6 +522,7 @@ def threshold_sweep_across_splits(
     seed_base: int,
     test_ratio: float,
     thr_step: float,
+    thr_metric: str = "f1_1"
 ):
     """
     모든 split을 돌면서 threshold별 confusion matrix를 누적한 뒤
@@ -521,15 +565,27 @@ def threshold_sweep_across_splits(
         m = _metrics_from_cm(cm_sum)
         scored.append((thr, m, cm_sum))
 
-    # F1_1 최대
-    scored.sort(key=lambda x: x[1]["f1_1"], reverse=True)
-    return scored  # [(thr, metrics, cm_sum), ...]
+    if not scored:
+        return []
+    # metric 최대 (동점이면 f1_1, recall_1로 tie-break)
+    key = thr_metric if thr_metric in scored[0][1] else "f1_1"
+    scored.sort(
+        key=lambda x: (x[1].get(key, 0.0), x[1].get("f1_1", 0.0), x[1].get("recall_1", 0.0)),
+        reverse=True,
+    )
 
 def _parse_int_list_csv(s: str) -> List[int]:
     parts = [p.strip() for p in str(s).split(",") if p.strip()]
     out: List[int] = []
     for p in parts:
         out.append(int(p))
+    return out
+
+def _parse_float_list_csv(s: str) -> List[float]:
+    parts = [p.strip() for p in str(s).split(",") if p.strip()]
+    out: List[float] = []
+    for p in parts:
+        out.append(float(p))
     return out
 
 
@@ -1085,7 +1141,21 @@ def main() -> None:
                    help="그룹 단위로 split하되(조합 분리), 그룹 라벨(다수결) 기준으로 stratified sampling 적용")
     p.add_argument("--tune-threshold", action="store_true", help="best 모델에 대해 threshold sweep으로 F1_1 최대 threshold 찾기")
     p.add_argument("--thr-step", type=float, default=0.05, help="threshold sweep step (default=0.05)")
-
+    # FIXED_TEST(고정 테스트)에서 threshold를 별도로 진단/조정하고 싶을 때
+    p.add_argument("--fixed-threshold", type=float, default=None,
+                   help="FIXED_TEST 평가 시 threshold를 강제로 지정(기본은 튜닝 결과/0.5 사용)")
+    p.add_argument("--fixed-threshold-sweep", action="store_true",
+                   help="FIXED_TEST에서 threshold sweep 후 최적 threshold를 선택(진단용; 평가 누수 주의)")
+    p.add_argument("--fixed-threshold-metric",
+                   choices=["f1_1", "bal_acc", "recall_1", "precision_1", "acc"],
+                   default="bal_acc",
+                   help="FIXED_TEST threshold sweep에서 최적화할 지표(기본 bal_acc)")
+    p.add_argument("--fixed-threshold-topn", type=int, default=5,
+               help="FIXED_TEST threshold sweep 결과 상위 N개 출력(기본 5)")
+    p.add_argument("--fixed-thresholds", default="",
+                   help="FIXED_TEST에서 지정 threshold들을 진단 출력. 예: 0.2,0.3,0.4,0.48")
+    p.add_argument("--thr-metric", choices=["f1_1","bal_acc","recall_1","precision_1"],
+                   default="f1_1", help="threshold 선택 기준 (default=f1_1)")
     p.add_argument("--rf-grid", action="store_true",
                    help="RF 미니 그리드 탐색(max_depth/min_samples_leaf) + threshold 재튜닝(=F1 최대)")
     p.add_argument("--save-model", default="", help="path to save final trained model (joblib). empty = no save")
@@ -1393,6 +1463,7 @@ def main() -> None:
                 seed_base=args.seed,
                 test_ratio=args.test_ratio,
                 thr_step=args.thr_step,
+                thr_metric=args.thr_metric,
             )
             if tuned is None:
                 print("[WARN] threshold tuning skipped (predict_proba not available).")
@@ -1528,6 +1599,7 @@ def main() -> None:
                 f.write(f"- cm_sum: {_fmt_cm(cm)}\n\n")
 
                 f.write("Top 5 thresholds by f1_1:\n\n")
+                f.write(f"Top 5 thresholds by {args.thr_metric}:\n\n")
                 f.write("| rank | thr | f1_1 | recall_1 | precision_1 | bal_acc |\n|---:|---:|---:|---:|---:|---:|\n")
                 for i, (t, mm, _) in enumerate(tuned[:5], start=1):
                     f.write(f"| {i} | {t:.2f} | {mm['f1_1']:.4f} | {mm['recall_1']:.4f} | {mm['precision_1']:.4f} | {mm['bal_acc']:.4f} |\n")
@@ -1695,14 +1767,69 @@ def main() -> None:
 
             y_true = [y for _, y in test_data]
             preds: Optional[List[int]] = None
+            probas: Optional[List[float]] = None
 
             if best.startswith("MAJORITY"):
                 maj = 1 if ys.count(1) > ys.count(0) else 0
                 preds = [maj] * len(test_data)
                 thr = 0.5
             else:
-                # proba 기반 threshold가 가능하면 사용
-                probas = fit_predict_proba_model(data, test_data, best, seed=args.seed)
+                # proba 기반 threshold가 가능하면 사용 (RF는 rf_grid_params 반영!)
+                if best == "RF_balanced_subsample" and rf_grid_params:
+                    probas = fit_predict_proba_rf(
+                        data, test_data,
+                        seed=args.seed,
+                        n_estimators=int(rf_grid_params.get("n_estimators", 200)),
+                        max_depth=rf_grid_params.get("max_depth", None),
+                        min_samples_leaf=int(rf_grid_params.get("min_samples_leaf", 1)),
+                        class_weight=str(rf_grid_params.get("class_weight", "balanced_subsample")),
+                    )
+                else:
+                    probas = fit_predict_proba_model(data, test_data, best, seed=args.seed)
+
+                # ---- threshold 결정 우선순위 ----
+                thr = 0.5
+                if args.fixed_threshold is not None:
+                    thr = float(args.fixed_threshold)
+                elif args.fixed_threshold_sweep:
+                    if probas is None:
+                        print("[WARN] fixed-threshold-sweep requested but probas unavailable.")
+                    else:
+                        ranked_thr = threshold_sweep_from_probas(
+                            y_true, probas,
+                            thr_step=args.thr_step,
+                            metric=args.fixed_threshold_metric,
+                        )
+                        topn = max(1, int(args.fixed_threshold_topn))
+                        print(f"[FIXED_SWEEP] metric={args.fixed_threshold_metric} top{topn}")
+                        for i, (t, mm, cm) in enumerate(ranked_thr[:topn], start=1):
+                            print(f"- #{i} thr={t:.2f} f1_1={mm['f1_1']:.4f} recall_1={mm['recall_1']:.4f} prec_1={mm['precision_1']:.4f} bal_acc={mm['bal_acc']:.4f} cm={_fmt_cm(cm)}")
+                        if ranked_thr:
+                            thr = float(ranked_thr[0][0])
+                else:
+                    if tuned and isinstance(tuned, list) and tuned:
+                        try:
+                            thr = float(tuned[0][0])
+                        except Exception:
+                            thr = 0.5
+                    elif rf_grid_best_row and isinstance(rf_grid_best_row, dict) and "thr" in rf_grid_best_row:
+                        try:
+                            thr = float(rf_grid_best_row["thr"])
+                        except Exception:
+                            thr = 0.5
+
+                # ---- 지정 threshold 목록 진단 출력 ----
+                if isinstance(args.fixed_thresholds, str) and args.fixed_thresholds.strip() and probas is not None:
+                    try:
+                        thrs = sorted(set(_parse_float_list_csv(args.fixed_thresholds)))
+                    except Exception:
+                        thrs = []
+                    for t2 in thrs:
+                        y_pred2 = [1 if p >= t2 else 0 for p in probas]
+                        cm2 = _cm_from_preds(y_true, y_pred2)
+                        m2 = _metrics_from_cm(cm2)
+                        print(f"[FIXED_THR] thr={t2:.2f} f1_1={m2['f1_1']:.4f} recall_1={m2['recall_1']:.4f} prec_1={m2['precision_1']:.4f} bal_acc={m2['bal_acc']:.4f} cm={_fmt_cm(cm2)}")
+
                 if probas is not None:
                     preds = [1 if p >= thr else 0 for p in probas]
                 else:
@@ -1721,9 +1848,11 @@ def main() -> None:
             else:
                 details: List[Dict[str, Any]] = []
                 for i, row in enumerate(test_rows_kept):
+                    pk = row.get(args.group_key, "") # group_key에 맞춰서 기록
                     details.append({
                         "scenario_title": row.get("scenario_title", ""),
                         "pair_key": row.get("pair_key", ""),
+                        "pair_key": pk,
                         "encounter_type": row.get("encounter_type", ""),
                         "defender_count": row.get("defender_count", ""),
                         "start_distance": row.get("start_distance", ""),

@@ -315,13 +315,17 @@ def export_csv(records: List[Dict[str, Any]], out_path: str, kinds: List[str], m
 
 def main() -> None:
     p = argparse.ArgumentParser()
-    p.add_argument("--input", action="append", default=["logs/scenarios.jsonl"],
+    p.add_argument("--input", action="append", default=None,
                    help="jsonl path (repeatable). default: logs/scenarios.jsonl")
     p.add_argument("--output", default="datasets/battle_dataset_v1.csv")
     p.add_argument("--kinds", default="scenario_preset,auto_experiment",
                    help="comma-separated kinds to include (default: scenario_preset,auto_experiment)")
     p.add_argument("--min-trials", type=int, default=1)
     args = p.parse_args()
+
+    # If --input is not provided, default to logs/scenarios.jsonl
+    if not args.input:
+        args.input = ["logs/scenarios.jsonl"]
 
     kinds = [x.strip() for x in (args.kinds or "").split(",") if x.strip()]
     all_records: List[Dict[str, Any]] = []
