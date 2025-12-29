@@ -10,6 +10,7 @@ JSONL 로그(전투 실험)를 읽어서 ML/분석용 CSV 데이터셋으로 exp
 
 from __future__ import annotations
 
+import random
 import argparse
 import csv
 import json
@@ -312,6 +313,231 @@ def export_csv(records: List[Dict[str, Any]], out_path: str, kinds: List[str], m
         for k in sorted(stats.keys()):
             print(f" - {k}: {stats[k]}")
 
+def export_trials_csv(
+    records: List[Dict[str, Any]],
+    out_path: str,
+    kinds: List[str],
+    min_trials: int,
+    max_trials_per_record: int | None = None,
+    seed: int = 42,
+) -> None:
+    """
+    실험 1개(summary 1개)를 trials(승/패/무/노결과 count)만큼 '전투 1회=1행'으로 펼쳐서 CSV로 저장.
+
+    - 각 row는 동일한 입력 feature(스펙/퍼크/거리 등)를 공유
+    - label_attacker_better:
+        - attacker win => 1
+        - defender win => 0
+        - draw/no_result => None  (train_baseline의 --drop_ties로 제거 가능)
+    """
+    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+
+    perk_catalog = load_perk_catalog()
+    perk_ids = sorted(perk_catalog.keys())
+
+    rng = random.Random(seed)
+
+    # trials 모드 고정 컬럼
+    fieldnames = [
+        "logged_at", "schema_version", "kind", "engine", "run_id", "run_id_short", "spec_source",
+        "scenario_title", "scenario_source",
+        "pair_key", "pair_key_full",
+
+        # record/trial meta
+        "record_trials", "trial_index", "trial_outcome",
+
+        # positions/features
+        "attacker_pos", "defender_pos", "start_distance", "encounter_type", "defender_count",
+        *[f"a_{k}" for k in UNIT_KEYS],
+        *[f"d_{k}" for k in UNIT_KEYS],
+        "a_perk_count", "d_perk_count", "perk_count_adv",
+        *[f"a_has_perk_{pid}" for pid in perk_ids],
+        *[f"d_has_perk_{pid}" for pid in perk_ids],
+        *[f"perk_adv_{pid}" for pid in perk_ids],
+        "a_dps", "d_dps",
+        "a_ttk_est", "d_ttk_est",
+        "dps_adv", "range_adv", "ttk_adv",
+
+        # labels
+        "label_attacker_better",
+    ]
+
+    stats = defaultdict(int)
+
+    with open(out_path, "w", encoding="utf-8", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=fieldnames)
+        w.writeheader()
+
+        for r in records:
+            kind = r.get("kind", "unknown")
+            if kinds and kind not in kinds:
+                stats["skip_kind"] += 1
+                continue
+
+            s = r.get("summary")
+            if not isinstance(s, dict):
+                stats["skip_no_summary"] += 1
+                continue
+
+            trials = int(s.get("trials", 0) or 0)
+            if trials < min_trials:
+                stats["skip_min_trials"] += 1
+                continue
+
+            # ---- base row (feature 부분) 만들기: 기존 export_csv 로직을 최대한 그대로 복사 ----
+            row: Dict[str, Any] = {}
+
+            # meta
+            row["logged_at"] = r.get("logged_at")
+            row["schema_version"] = schema_of(r)
+            row["kind"] = kind
+            row["engine"] = r.get("engine")
+            row["run_id"] = r.get("run_id")
+            row["run_id_short"] = short_id(r.get("run_id"))
+            row["spec_source"] = r.get("spec_source")
+
+            row["scenario_title"] = r.get("scenario_title")
+            row["scenario_source"] = r.get("scenario_source")
+
+            # positions (2D 시나리오면 종종 존재)
+            row["attacker_pos"] = s.get("attacker_pos")
+            row["defender_pos"] = s.get("defender_pos")
+
+            # start_distance
+            start_distance = None
+            ap = _as_point(row["attacker_pos"])
+            enc_tmp = str(s.get("encounter_type", "duel") or "duel").strip().lower()
+            dp_raw = row["defender_pos"]
+            if ap is not None:
+                if enc_tmp == "swarm" and isinstance(dp_raw, list) and dp_raw and isinstance(dp_raw[0], (list, tuple)):
+                    dps = _as_points(dp_raw)
+                    if dps:
+                        start_distance = min(math.hypot(px - ap[0], py - ap[1]) for px, py in dps)
+                else:
+                    dp = _as_point(dp_raw)
+                    if dp is not None:
+                        start_distance = math.hypot(dp[0] - ap[0], dp[1] - ap[1])
+            row["start_distance"] = start_distance
+
+            # encounter + defender_count
+            row["encounter_type"] = s.get("encounter_type", "duel")
+            try:
+                row["defender_count"] = int(s.get("defender_count", 1) or 1)
+            except Exception:
+                row["defender_count"] = 1
+
+            # unit features
+            row.update(flatten_unit(s.get("attacker_unit"), "a_"))
+            row.update(flatten_unit(s.get("defender_unit"), "d_"))
+
+            # perk features
+            a_unit = s.get("attacker_unit") if isinstance(s.get("attacker_unit"), dict) else {}
+            d_unit = s.get("defender_unit") if isinstance(s.get("defender_unit"), dict) else {}
+
+            a_perks = a_unit.get("perks") or []
+            d_perks = d_unit.get("perks") or []
+            a_set = set(a_perks) if isinstance(a_perks, list) else set()
+            d_set = set(d_perks) if isinstance(d_perks, list) else set()
+
+            row["a_perk_count"] = len(a_set)
+            row["d_perk_count"] = len(d_set)
+            row["perk_count_adv"] = len(a_set) - len(d_set)
+
+            for pid in perk_ids:
+                a_has = 1 if pid in a_set else 0
+                d_has = 1 if pid in d_set else 0
+                row[f"a_has_perk_{pid}"] = a_has
+                row[f"d_has_perk_{pid}"] = d_has
+                row[f"perk_adv_{pid}"] = a_has - d_has
+
+            # group keys
+            a_name = row.get("a_name")
+            d_name = row.get("d_name")
+            if isinstance(a_name, str) and isinstance(d_name, str) and a_name.strip() and d_name.strip():
+                encounter = str(row.get("encounter_type") or "duel").lower()
+                count = row.get("defender_count")
+                row["pair_key"] = f"{a_name.strip()}__vs__{d_name.strip()}__{encounter}__x{count}"
+
+                a_lv = row.get("a_level")
+                d_lv = row.get("d_level")
+                a_sig = _perk_sig(a_perks)
+                d_sig = _perk_sig(d_perks)
+                dist_b = _dist_bucket(row.get("start_distance"), step=1.0)
+                row["pair_key_full"] = (
+                    f"{a_name.strip()}@L{a_lv}|{a_sig}"
+                    f"__vs__"
+                    f"{d_name.strip()}@L{d_lv}|{d_sig}"
+                    f"__{encounter}__x{count}__dist{dist_b}"
+                )
+            else:
+                row["pair_key"] = None
+                row["pair_key_full"] = None
+
+            # derived features
+            a_hp = to_float(row.get("a_hp"))
+            a_atk = to_float(row.get("a_atk"))
+            a_rng = to_float(row.get("a_range"))
+            a_as = to_float(row.get("a_attack_speed"))
+
+            d_hp = to_float(row.get("d_hp"))
+            d_atk = to_float(row.get("d_atk"))
+            d_rng = to_float(row.get("d_range"))
+            d_as = to_float(row.get("d_attack_speed"))
+
+            a_dps = (a_atk * a_as) if (a_atk is not None and a_as is not None) else None
+            d_dps = (d_atk * d_as) if (d_atk is not None and d_as is not None) else None
+            a_ttk_est = safe_div(d_hp, a_dps)
+            d_ttk_est = safe_div(a_hp, d_dps)
+
+            row["a_dps"] = a_dps
+            row["d_dps"] = d_dps
+            row["a_ttk_est"] = a_ttk_est
+            row["d_ttk_est"] = d_ttk_est
+            row["dps_adv"] = (a_dps - d_dps) if (a_dps is not None and d_dps is not None) else None
+            row["range_adv"] = (a_rng - d_rng) if (a_rng is not None and d_rng is not None) else None
+            row["ttk_adv"] = (d_ttk_est - a_ttk_est) if (d_ttk_est is not None and a_ttk_est is not None) else None
+
+            # ---- 여기서부터 "trial 펼치기" ----
+            wa = int(s.get("wins_attacker", 0) or 0)
+            wd = int(s.get("wins_defender", 0) or 0)
+            dr = int(s.get("draws", 0) or 0)
+            nr = int(s.get("no_result", 0) or 0)
+
+            outcomes: List[str] = (["attacker"] * wa) + (["defender"] * wd) + (["draw"] * dr) + (["no_result"] * nr)
+
+            if not outcomes:
+                stats["skip_no_outcomes"] += 1
+                continue
+
+            if max_trials_per_record is not None and len(outcomes) > max_trials_per_record:
+                rng.shuffle(outcomes)
+                outcomes = outcomes[:max_trials_per_record]
+                stats["cap_trials_per_record"] += 1
+
+            for ti, outc in enumerate(outcomes):
+                rr = dict(row)  # base feature 복사
+                rr["record_trials"] = trials
+                rr["trial_index"] = ti
+                rr["trial_outcome"] = outc
+
+                if outc == "attacker":
+                    rr["label_attacker_better"] = 1
+                elif outc == "defender":
+                    rr["label_attacker_better"] = 0
+                else:
+                    rr["label_attacker_better"] = None  # draw/no_result
+
+                w.writerow({k: rr.get(k, None) for k in fieldnames})
+                stats["ok_rows"] += 1
+
+            stats["ok_records"] += 1
+
+    print(f"[OK] wrote: {out_path}")
+    print("[STATS]")
+    for k in sorted(stats.keys()):
+        print(f" - {k}: {stats[k]}")
+
+
 
 def main() -> None:
     p = argparse.ArgumentParser()
@@ -321,6 +547,12 @@ def main() -> None:
     p.add_argument("--kinds", default="scenario_preset,auto_experiment",
                    help="comma-separated kinds to include (default: scenario_preset,auto_experiment)")
     p.add_argument("--min-trials", type=int, default=1)
+    p.add_argument("--mode", choices=["summary", "trials"], default="summary",
+                    help="summary: record 1개=1행, trials: 전투 1회=1행으로 펼침")
+    p.add_argument("--max-trials-per-record", type=int, default=None,
+                    help="mode=trials일 때 record당 최대 row 수(크면 샘플링해서 제한)")
+    p.add_argument("--seed", type=int, default=42, help="mode=trials 샘플링 시 시드")
+
     args = p.parse_args()
 
     # If --input is not provided, default to logs/scenarios.jsonl
@@ -341,7 +573,17 @@ def main() -> None:
         for e in all_errors[:10]:
             print(" -", e)
 
-    export_csv(all_records, args.output, kinds=kinds, min_trials=args.min_trials)
+    if args.mode == "trials":
+        export_trials_csv( 
+            all_records,
+            args.output,
+            kinds=kinds,
+            min_trials=args.min_trials,
+            max_trials_per_record=args.max_trials_per_record,
+            seed=args.seed,
+        )
+    else:
+        export_csv(all_records, args.output, kinds=kinds, min_trials=args.min_trials)
 
 
 if __name__ == "__main__":

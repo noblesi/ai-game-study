@@ -25,9 +25,11 @@ notebooks/defense-balancing-tool/datasets/scenario_dataset.csv
 notebooks/defense-balancing-tool/datasets/scenarios_v1.csv
 notebooks/defense-balancing-tool/datasets/scenarios_v2.csv
 notebooks/defense-balancing-tool/datasets/test_scenarios_v1.csv
+notebooks/defense-balancing-tool/datasets/train_experiments_no_scenario_pairs.csv
 notebooks/defense-balancing-tool/datasets/train_experiments_train_by_pair.csv
 notebooks/defense-balancing-tool/datasets/train_experiments_v1.csv
 notebooks/defense-balancing-tool/export_dataset.py
+notebooks/defense-balancing-tool/filter_train_exclude_scenarios.py
 notebooks/defense-balancing-tool/logs/experiments.jsonl
 notebooks/defense-balancing-tool/logs/experiments.jsonl.bak-20251218-211829
 notebooks/defense-balancing-tool/logs/experiments_swarm.jsonl
@@ -53,6 +55,10 @@ notebooks/defense-balancing-tool/reports/baseline_eval_20251226_group_pair_key.m
 notebooks/defense-balancing-tool/reports/baseline_eval_20251226_group_pair_key_fixedtest.md
 notebooks/defense-balancing-tool/reports/baseline_eval_20251226_group_pair_key_full.md
 notebooks/defense-balancing-tool/reports/baseline_eval_20251226_group_pair_key_full_fixedtest.md
+notebooks/defense-balancing-tool/reports/baseline_eval_20251228_group_pair_key.md
+notebooks/defense-balancing-tool/reports/baseline_eval_20251228_group_pair_key_fixedtest.md
+notebooks/defense-balancing-tool/reports/baseline_eval_20251228_group_pair_key_full.md
+notebooks/defense-balancing-tool/reports/baseline_eval_20251228_group_pair_key_full_fixedtest.md
 notebooks/defense-balancing-tool/reports/baseline_experiments_20251224.md
 notebooks/defense-balancing-tool/reports/baseline_fixedtest_20251224.md
 notebooks/defense-balancing-tool/reports/baseline_fixedtest_perk_20251224.md
@@ -61,8 +67,10 @@ notebooks/defense-balancing-tool/reports/baseline_scenarios_20251224.md
 notebooks/defense-balancing-tool/reports/baseline_traincv_20251224.md
 notebooks/defense-balancing-tool/reports/baseline_traincv_perk_20251224.md
 notebooks/defense-balancing-tool/reports/baseline_traincv_thr_20251224.md
+notebooks/defense-balancing-tool/reports/experiments_summary.md
 notebooks/defense-balancing-tool/reports/scenario_report.md
 notebooks/defense-balancing-tool/reports/scenario_report_20251224.md
+notebooks/defense-balancing-tool/reports/scenarios_summary.md
 notebooks/defense-balancing-tool/requirements.txt
 notebooks/defense-balancing-tool/run_pipeline.ps1
 notebooks/defense-balancing-tool/scenario_loader.py

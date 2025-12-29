@@ -1,1903 +1,574 @@
 from __future__ import annotations
 
 import argparse
-import csv
-import random
-from collections import Counter
-from typing import Any, Dict, List, Tuple
-
-from common.parse import to_float
-
-# (1) base(퍼크 제외) - "x를 만드는 순서" 그대로 적어야 함
-BASE_FEATURE_NAMES = [
-    # meta(3)  <<== x 맨 앞이 이 순서라면, 이름도 이 순서!
-    "encounter_is_swarm", "defender_count", "start_distance",
-
-    # base attacker(5)
-    "a_hp", "a_atk", "a_range", "a_attack_speed", "a_move_speed",
-    # base defender(5)
-    "d_hp", "d_atk", "d_range", "d_attack_speed", "d_move_speed",
-
-    # deltas(5)
-    "dhp", "datk", "drange", "dattack_speed", "dmove_speed",
-
-    # derived(7)
-    "a_dps", "d_dps", "a_ttk_est", "d_ttk_est",
-    "dps_adv", "range_adv", "ttk_adv",
-
-    # perk count(3)
-    "a_perk_count", "d_perk_count", "perk_count_adv",
-]
-
-# (2) row에서 숫자로 읽어올 키들
-#  - encounter_is_swarm는 row에 없고 계산값이므로 여기 넣지 않음
-BASE_NUM_KEYS = [
-    "defender_count",
-    "start_distance",
-
-    "a_hp", "a_atk", "a_range", "a_attack_speed", "a_move_speed",
-    "d_hp", "d_atk", "d_range", "d_attack_speed", "d_move_speed",
-
-    "a_dps", "d_dps", "a_ttk_est", "d_ttk_est",
-    "dps_adv", "range_adv", "ttk_adv",
-
-    "a_perk_count", "d_perk_count",
-]
-
-FEATURE_NAMES: list[str] = []
-NUM_KEYS: list[str] = []
-PERK_IDS: list[str] = []
-
-
-def rebuild_feature_schema():
-    """PERK_IDS가 확정된 뒤, FEATURE_NAMES/NUM_KEYS를 항상 x와 동일하게 재구성."""
-    global FEATURE_NAMES, NUM_KEYS
-    FEATURE_NAMES = list(BASE_FEATURE_NAMES)
-    NUM_KEYS = list(BASE_NUM_KEYS)
-
-    # perk one-hot + advantage
-    for pid in PERK_IDS:
-        FEATURE_NAMES.extend([f"a_has_perk_{pid}", f"d_has_perk_{pid}", f"perk_adv_{pid}"])
-        NUM_KEYS.extend([f"a_has_perk_{pid}", f"d_has_perk_{pid}"])
-
-
-def detect_perk_ids(rows: list[dict]) -> list[str]:
-    """CSV 컬럼에서 a_has_perk_* / d_has_perk_*를 모아 PERK_IDS 결정."""
-    ids = set()
-    if not rows:
-        return []
-    for k in rows[0].keys():
-        if k.startswith("a_has_perk_"):
-            ids.add(k[len("a_has_perk_"):])
-        elif k.startswith("d_has_perk_"):
-            ids.add(k[len("d_has_perk_"):])
-    return sorted(ids)
-
-
-def load_csv(path: str) -> List[Dict[str, Any]]:
-    rows: List[Dict[str, Any]] = []
-    with open(path, "r", encoding="utf-8") as f:
-        r = csv.DictReader(f)
-        for row in r:
-            rows.append(row)
-    return rows
-
-
-def build_features(row: Dict[str, Any]) -> Tuple[List[float], int] | None:
-    y_raw = row.get("label_attacker_better", "")
-    try:
-        y = int(float(y_raw))
-    except Exception:
-        return None
-    if y not in (0, 1):
-        return None
-
-    vals: Dict[str, float] = {}
-    for k in NUM_KEYS:
-        v = to_float(row.get(k))
-        # 최소 구현: 누락은 0.0으로 채워서 usable rows를 유지
-        vals[k] = 0.0 if v is None else v
-
-    # encounter_type (categorical) -> 0/1
-    enc = str(row.get("encounter_type") or "duel").strip().lower()
-    encounter_is_swarm = 1.0 if enc == "swarm" else 0.0
-
-    dc_raw = to_float(row.get("defender_count"))
-    sd_raw = to_float(row.get("start_distance"))
-
-    # duel 기본 1, swarm도 0/None이면 1로 보정
-    if encounter_is_swarm < 0.5:
-        defender_count = 1.0
-    else:
-        defender_count = 1.0 if (dc_raw is None or dc_raw <= 0) else float(dc_raw)
-
-    start_distance = 0.0 if sd_raw is None else float(sd_raw)
-
-    x: list[float] = []
-    x.extend([encounter_is_swarm, defender_count, start_distance])
-    x.extend([vals["a_hp"], vals["a_atk"], vals["a_range"], vals["a_attack_speed"], vals["a_move_speed"]])
-    x.extend([vals["d_hp"], vals["d_atk"], vals["d_range"], vals["d_attack_speed"], vals["d_move_speed"]])
-
-    x.extend([
-        vals["a_hp"] - vals["d_hp"],
-        vals["a_atk"] - vals["d_atk"],
-        vals["a_range"] - vals["d_range"],
-        vals["a_attack_speed"] - vals["d_attack_speed"],
-        vals["a_move_speed"] - vals["d_move_speed"],
-    ])
-
-    # derived features
-    x.extend([
-        vals["a_dps"], vals["d_dps"], vals["a_ttk_est"], vals["d_ttk_est"],
-        vals["dps_adv"], vals["range_adv"], vals["ttk_adv"],
-    ])
-
-    # ===== Perk features =====
-    a_pc = to_float(row.get("a_perk_count"))
-    d_pc = to_float(row.get("d_perk_count"))
-    a_pc = 0.0 if a_pc is None else a_pc
-    d_pc = 0.0 if d_pc is None else d_pc
-
-    # count + advantage
-    x.extend([a_pc, d_pc, a_pc - d_pc])
-
-    # one-hot + advantage (동적으로 감지된 PERK_IDS 사용)
-    for pid in PERK_IDS:
-        a_has = to_float(row.get(f"a_has_perk_{pid}"))
-        d_has = to_float(row.get(f"d_has_perk_{pid}"))
-        a_has = 0.0 if a_has is None else a_has
-        d_has = 0.0 if d_has is None else d_has
-        x.extend([a_has, d_has, a_has - d_has])
-
-
-    return x, y
-
-
-def split_xy(data, test_ratio: float, seed: int):
-    # 항상 (train, test)를 반환하도록 보장하는 안전 버전
-    if data is None:
-        return [], []
-    n = len(data)
-    if n < 2:
-        return data[:], []
-
-    # test_ratio 안전 보정
-    if test_ratio is None:
-        test_ratio = 0.2
-    test_ratio = float(test_ratio)
-    if test_ratio <= 0.0:
-        return data[:], []
-    if test_ratio >= 1.0:
-        return [], data[:]
-
-    rnd = random.Random(seed)
-    idx = list(range(n))
-    rnd.shuffle(idx)
-
-    n_test = int(round(n * test_ratio))
-    # train/test 둘 다 비지 않게 clamp
-    n_test = max(1, min(n - 1, n_test))
-
-    test_idx = set(idx[:n_test])
-    test = [data[i] for i in range(n) if i in test_idx]
-    train = [data[i] for i in range(n) if i not in test_idx]
-    return train, test
-
-    
-    
-def _split_indices(n: int, test_ratio: float, seed: int) -> tuple[list[int], list[int]]:
-    rnd = random.Random(seed)
-    idx = list(range(n))
-    rnd.shuffle(idx)
-    n_test = max(1, int(n * test_ratio))
-    test_idx = idx[:n_test]
-    train_idx = idx[n_test:]
-    return train_idx, test_idx
-
-def fit_final_estimator(
-    model_name: str,
-    X: List[List[float]],
-    y: List[int],
-    *,
-    seed: int,
-    rf_params: Dict[str, Any] | None = None,
-):
-    if model_name in ("LR", "LR_balanced"):
-        from sklearn.linear_model import LogisticRegression
-        from sklearn.preprocessing import StandardScaler
-        from sklearn.pipeline import Pipeline
-
-        cw = None if model_name == "LR" else "balanced"
-        clf = Pipeline([
-            ("scaler", StandardScaler()),
-            ("lr", LogisticRegression(max_iter=400, class_weight=cw)),
-        ])
-        clf.fit(X, y)
-        return clf
-
-    if model_name == "DT_balanced":
-        from sklearn.tree import DecisionTreeClassifier
-        clf = DecisionTreeClassifier(class_weight="balanced", random_state=seed)
-        clf.fit(X, y)
-        return clf
-
-    if model_name == "RF_balanced_subsample":
-        from sklearn.ensemble import RandomForestClassifier
-        params = rf_params or {}
-        clf = RandomForestClassifier(
-            n_estimators=int(params.get("n_estimators", 200)),
-            max_depth=params.get("max_depth", None),
-            min_samples_leaf=int(params.get("min_samples_leaf", 1)),
-            class_weight=params.get("class_weight", "balanced_subsample"),
-            random_state=seed,
-            n_jobs=-1,
-        )
-        clf.fit(X, y)
-        return clf
-
-    return None
-
-
-def save_bundle(
-    model,
-    *,
-    model_path: str,
-    meta_path: str,
-    model_name: str,
-    feature_names: List[str],
-    perk_ids: List[str],
-    threshold: float,
-    group_key: str,
-    rf_params: Dict[str, Any] | None = None,
-    train_path: str = "",
-    test_path: str = "",
-) -> None:
-    """모델(joblib) + 메타(JSON)를 함께 저장.
-
-    - model_path: joblib 파일 경로
-    - meta_path : 메타 JSON 경로(threshold/feature/perk 등)
-    """
-    os.makedirs(os.path.dirname(model_path) or ".", exist_ok=True)
-    joblib.dump(model, model_path)
-
-    meta = {
-        "schema_version": "model_bundle_v1",
-        "created_at": datetime.datetime.now().isoformat(timespec="seconds"),
-        "model_name": model_name,
-        "threshold": float(threshold),
-        "group_key": group_key,
-        "train_path": train_path,
-        "test_path": test_path,
-        "rf_params": rf_params or None,
-        "feature_names": feature_names,
-        "perk_ids": perk_ids,
-    }
-    os.makedirs(os.path.dirname(meta_path) or ".", exist_ok=True)
-    with open(meta_path, "w", encoding="utf-8") as f:
-        json.dump(meta, f, ensure_ascii=False, indent=2)
-
-
+import datetime as dt
 import os
-import datetime
-import json
-import joblib
-import re
-from typing import Optional
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Sequence, Tuple
 
-def _cm_from_preds(y_true: List[int], y_pred: List[int]) -> List[List[int]]:
-    # rows: true(0/1), cols: pred(0/1) => [[TN, FP],[FN, TP]]
-    tn = fp = fn = tp = 0
-    for yt, yp in zip(y_true, y_pred):
-        if yt == 0 and yp == 0:
-            tn += 1
-        elif yt == 0 and yp == 1:
-            fp += 1
-        elif yt == 1 and yp == 0:
-            fn += 1
-        elif yt == 1 and yp == 1:
-            tp += 1
-    return [[tn, fp], [fn, tp]]
+import numpy as np
+import pandas as pd
 
-def _metrics_from_cm(cm: List[List[int]]) -> Dict[str, float]:
-    tn, fp = cm[0]
-    fn, tp = cm[1]
-    n = tn + fp + fn + tp
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import (
+    accuracy_score,
+    average_precision_score,
+    balanced_accuracy_score,
+    confusion_matrix,
+    precision_recall_fscore_support,
+    roc_auc_score,
+)
+from sklearn.model_selection import GroupShuffleSplit, train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
 
-    acc = (tp + tn) / n if n else 0.0
 
-    # label=1 metrics
-    precision_1 = tp / (tp + fp) if (tp + fp) else 0.0
-    recall_1 = tp / (tp + fn) if (tp + fn) else 0.0
-    f1_1 = (2 * precision_1 * recall_1 / (precision_1 + recall_1)) if (precision_1 + recall_1) else 0.0
+def today_yyyymmdd() -> str:
+    return dt.datetime.now().strftime("%Y%m%d")
 
-    # balanced accuracy
-    tpr = recall_1
-    tnr = tn / (tn + fp) if (tn + fp) else 0.0
-    bal_acc = (tpr + tnr) / 2.0
 
-    return {
+def resolve_label_col(cols: Sequence[str]) -> str:
+    for c in [
+        "label", "y", "target", "defender_win", "win", "outcome",
+        "label_attacker_better", "label_defender_better",
+    ]:
+        if c in cols:
+            return c
+    raise ValueError(f"[train_baseline] label column not found. cols={list(cols)[:30]}...")
+
+
+def resolve_group_col(cols: Sequence[str], want: str) -> str:
+    if want in cols:
+        return want
+    for c in ["pair_key", "group", "matchup_key"]:
+        if c in cols:
+            return c
+    raise ValueError(f"[train_baseline] group column '{want}' not found. cols={list(cols)[:30]}...")
+
+
+def select_feature_cols(df: pd.DataFrame, label_col: str, group_col: Optional[str],
+                        drop_adv: bool, drop_perk: bool) -> List[str]:
+    drop = {label_col}
+    if group_col:
+        drop.add(group_col)
+
+    drop |= {
+        "kind","scenario_id","seed","trial","run_id","run_id_short","logged_at","schema_version",
+        "engine","spec_source","scenario_title","scenario_source","pair_key_full",
+        "attacker_id","defender_id","a_id","d_id","a_name","d_name","encounter_type",
+        "record_trials", "trial_index", "trial_outcome", "attacker_pos", "defender_pos"
+    }
+
+    result_cols = {
+        "trials","wins_attacker","wins_defender","draws","no_result",
+        "attacker_win_rate","defender_win_rate","draw_rate","no_result_rate","avg_time",
+    }
+
+    feats: List[str] = []
+    for c in df.columns:
+        if c in drop:
+            continue
+        if c in result_cols:
+            continue
+
+        lc = c.lower()
+
+        # ✅ "label_"로 시작하는 컬럼은 전부 누수 후보 → feature 제외
+        # (우리 타겟 컬럼(label_col)만 예외지만, label_col은 이미 drop에 들어가 있어서 여기 안 걸림)
+        if lc.startswith("label_"):
+            continue
+
+        # (추가 안전장치) 이름에 target/outcome/result가 들어가면 제외
+        if any(k in lc for k in ("target", "outcome", "result")):
+            continue
+
+        # (특정 누수 컬럼 명시 제거)
+        if lc == "label_attacker_better":
+            continue
+
+        # (선택) adv/dps/ttk/est 같은 “판정성 강한” 파생 피처 제거
+        if drop_adv and (("_adv" in lc) or ("dps" in lc) or ("ttk" in lc) or ("_est" in lc)):
+            continue
+
+        # (선택) 퍼크 관련 피처 전체 제거
+        if drop_perk and (("has_perk" in lc) or ("perk_" in lc)):
+            continue
+
+        if lc.startswith("wins_"):
+            continue
+        if lc.endswith("_rate"):
+            continue
+        if lc in ("avg_time", "trials"):
+            continue
+
+        if pd.api.types.is_numeric_dtype(df[c]):
+            feats.append(c)
+
+    if not feats:
+        raise ValueError("[train_baseline] numeric feature columns not found after filtering")
+
+    return feats
+
+def rate(y: np.ndarray) -> float:
+    return float(np.mean(y)) if len(y) else float("nan")
+
+@dataclass
+class SplitResult:
+    train_idx: np.ndarray
+    val_idx: np.ndarray
+    test_idx: np.ndarray
+    test_pos_rate: float
+    test_groups: Optional[np.ndarray] = None
+
+
+def group_split_once(
+    n: int,
+    groups: np.ndarray,
+    seed: int,
+    test_ratio: float,
+    val_ratio: float,
+    fixed_test_groups: Optional[Sequence[str]] = None,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    idx_all = np.arange(n)
+
+    if fixed_test_groups is None:
+        gss = GroupShuffleSplit(n_splits=1, test_size=test_ratio, random_state=seed)
+        tr_idx, te_idx = next(gss.split(idx_all, groups=groups))
+        test_groups = np.unique(groups[te_idx])
+    else:
+        fixed = np.array(list(fixed_test_groups))
+        te_mask = np.isin(groups, fixed)
+        te_idx = idx_all[te_mask]
+        tr_idx = idx_all[~te_mask]
+        test_groups = np.unique(groups[te_idx])
+
+    # val은 train 내부에서 다시 group split
+    denom = max(1e-9, 1.0 - test_ratio)
+    val_size_rel = min(0.9, max(0.01, val_ratio / denom))
+
+    gss2 = GroupShuffleSplit(n_splits=1, test_size=val_size_rel, random_state=seed + 1)
+    tr2_sub, va_sub = next(gss2.split(tr_idx, groups=groups[tr_idx]))
+    tr2_idx = tr_idx[tr2_sub]
+    va_idx = tr_idx[va_sub]
+    return tr2_idx, va_idx, te_idx, test_groups
+
+
+def pick_group_split_stratified(
+    y: np.ndarray,
+    groups: np.ndarray,
+    seed: int,
+    test_ratio: float,
+    val_ratio: float,
+    tries: int = 200,
+    fixed_test_groups: Optional[Sequence[str]] = None,
+) -> SplitResult:
+    overall = rate(y)
+
+    if fixed_test_groups is not None:
+        tr, va, te, tg = group_split_once(len(y), groups, seed, test_ratio, val_ratio, fixed_test_groups)
+        return SplitResult(tr, va, te, test_pos_rate=rate(y[te]), test_groups=tg)
+
+    rng = np.random.RandomState(seed)
+    best: Optional[SplitResult] = None
+    best_score = float("inf")
+
+    for _ in range(max(1, tries)):
+        s = int(rng.randint(0, 2**31 - 1))
+        tr, va, te, tg = group_split_once(len(y), groups, s, test_ratio, val_ratio, None)
+        tpr = rate(y[te])
+        score = abs(tpr - overall)  # test_pos_rate가 전체와 비슷한 split 선호
+
+        best_tg_len = 0 if (best is None or best.test_groups is None) else len(best.test_groups)
+        if (score < best_score - 1e-12) or (
+            abs(score - best_score) <= 1e-12 and len(tg) > best_tg_len
+        ):
+            best_score = score
+            best = SplitResult(tr, va, te, test_pos_rate=tpr, test_groups=tg)
+
+    assert best is not None
+    return best
+
+
+def random_split_stratified(y: np.ndarray, seed: int, test_ratio: float, val_ratio: float) -> SplitResult:
+    idx = np.arange(len(y))
+    tr_idx, te_idx = train_test_split(idx, test_size=test_ratio, random_state=seed, stratify=y)
+
+    denom = max(1e-9, 1.0 - test_ratio)
+    val_size_rel = min(0.9, max(0.01, val_ratio / denom))
+    tr2_idx, va_idx = train_test_split(tr_idx, test_size=val_size_rel, random_state=seed + 1, stratify=y[tr_idx])
+    return SplitResult(tr2_idx, va_idx, te_idx, test_pos_rate=rate(y[te_idx]), test_groups=None)
+
+
+def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray, y_score: Optional[np.ndarray] = None) -> Dict[str, float]:
+    acc = float(accuracy_score(y_true, y_pred))
+    bal_acc = float(balanced_accuracy_score(y_true, y_pred))
+    prec, rec, f1, _ = precision_recall_fscore_support(
+        y_true, y_pred, pos_label=1, average="binary", zero_division=0
+    )
+
+    out: Dict[str, float] = {
         "acc": acc,
         "bal_acc": bal_acc,
-        "precision_1": precision_1,
-        "recall_1": recall_1,
-        "f1_1": f1_1,
+        "prec_1": float(prec),
+        "recall_1": float(rec),
+        "f1_1": float(f1),
     }
 
-def threshold_sweep_from_probas(
-    y_true: List[int],
-    probas_1: List[float],
-    *,
-    thr_step: float,
-    metric: str,
-) -> List[Tuple[float, Dict[str, float], List[List[int]]]]:
-    """단일 셋(y_true/proba_1)에 대해 threshold sweep.
-    FIXED_TEST 같은 고정 테스트에서 어떤 threshold가 좋은지 진단용.
-    """
-    if not y_true or not probas_1 or len(y_true) != len(probas_1):
-        return []
+    if y_score is not None:
+        try:
+            out["ap"] = float(average_precision_score(y_true, y_score))
+        except Exception:
+            out["ap"] = float("nan")
+        try:
+            out["roc_auc"] = float(roc_auc_score(y_true, y_score))
+        except Exception:
+            out["roc_auc"] = float("nan")
 
-    step = float(thr_step) if thr_step else 0.05
-    step = max(0.0005, min(0.5, step))
+    return out
 
-    thresholds: List[float] = []
-    t = 0.0
-    while t < 1.0:
-        thresholds.append(round(t, 4))
-        t += step
 
-    # 자주 쓰는 기준점은 강제로 포함
-    for must in (0.05, 0.10, 0.20, 0.50, 0.65):
-        if must not in thresholds:
-            thresholds.append(must)
-    thresholds = sorted(set(thresholds))
+def tune_threshold(y_true, y_score, metric, thr_min: float, thr_max: float, thr_steps: int):
+    thresholds = np.linspace(thr_min, thr_max, thr_steps)
 
-    scored: List[Tuple[float, Dict[str, float], List[List[int]]]] = []
+    best_thr = 0.5
+    best_key = -1.0
+    best_detail: Dict[str, float] = {"recall_1": -1.0, "prec_1": -1.0}
+
     for thr in thresholds:
-        y_pred = [1 if p >= thr else 0 for p in probas_1]
-        cm = _cm_from_preds(y_true, y_pred)
-        m = _metrics_from_cm(cm)
-        scored.append((thr, m, cm))
+        y_pred = (y_score >= thr).astype(int)
+        m = compute_metrics(y_true, y_pred, y_score=y_score)
 
-    key = metric if metric in ("acc", "bal_acc", "f1_1", "recall_1", "precision_1") else "f1_1"
-    scored.sort(
-        key=lambda x: (x[1].get(key, 0.0), x[1].get("f1_1", 0.0), x[1].get("recall_1", 0.0)),
-        reverse=True,
-    )
-    return scored
+        key = {
+            "f1": m["f1_1"],
+            "recall": m["recall_1"],
+            "precision": m["prec_1"],
+            "bal_acc": m["bal_acc"],
+        }[metric]
+
+        # tie-break: recall -> precision
+        if (key > best_key + 1e-12) or (
+            abs(key - best_key) <= 1e-12 and (m["recall_1"], m["prec_1"]) > (best_detail["recall_1"], best_detail["prec_1"])
+        ):
+            best_key = key
+            best_thr = float(thr)
+            best_detail = m
+
+    best_detail = dict(best_detail)
+    best_detail["thr"] = best_thr
+    best_detail["thr_metric"] = best_key
+    return best_thr, best_detail
 
 
-def _cm_add(a: List[List[int]], b: List[List[int]]) -> List[List[int]]:
-    return [
-        [a[0][0] + b[0][0], a[0][1] + b[0][1]],
-        [a[1][0] + b[1][0], a[1][1] + b[1][1]],
-    ]
-
-def _summ(vs: List[float]) -> Dict[str, float]:
-    if not vs:
-        return {"mean": 0.0, "min": 0.0, "max": 0.0}
+def summarize(vals: List[float]) -> Dict[str, float]:
+    arr = np.array(vals, dtype=float)
     return {
-        "mean": sum(vs) / len(vs),
-        "min": min(vs),
-        "max": max(vs),
+        "mean": float(np.nanmean(arr)),
+        "min": float(np.nanmin(arr)),
+        "max": float(np.nanmax(arr)),
     }
 
-def _fmt3(x: float) -> str:
-    return f"{x:.4f}"
 
-def _fmt_cm(cm: List[List[int]]) -> str:
-    tn, fp = cm[0]
-    fn, tp = cm[1]
-    return f"TN={tn} FP={fp} FN={fn} TP={tp}"
-
-def _sanitize_filename(s: str, max_len: int = 40) -> str:
-    s = (s or "").strip()
-    if not s:
-        return "na"
-    s = re.sub(r"[^0-9a-zA-Z._-]+", "-", s)
-    s = re.sub(r"-{2,}", "-", s).strip("-")
-    return s[:max_len]
-
-def _default_report_path(split_mode: str, group_key: str) -> str:
-    ts = datetime.datetime.now().strftime("%Y%m%d")
-    tail = (split_mode or "random").lower()
-    if tail == "group":
-        tail += "_" + _sanitize_filename(group_key)
-    return os.path.join("reports", f"baseline_eval_{ts}_{tail}.md")
+def fmt_stats(name: str, s: Dict[str, float]) -> str:
+    return f"- {name:<9} mean={s['mean']:.4f} min={s['min']:.4f} max={s['max']:.4f}"
 
 
-def fit_predict_lr(train, test, class_weight=None, seed: int = 0) -> Optional[List[int]]:
-    try:
-        from sklearn.linear_model import LogisticRegression
-        from sklearn.preprocessing import StandardScaler
-        from sklearn.pipeline import Pipeline
-    except Exception:
+def parse_class_weight(s: str):
+    s = s.strip().lower()
+    if s == "none":
         return None
-
-    X_train = [x for x, _ in train]
-    y_train = [y for _, y in train]
-    X_test = [x for x, _ in test]
-
-    clf = Pipeline([
-        ("scaler", StandardScaler()),
-        ("lr", LogisticRegression(max_iter=400, class_weight=class_weight)),
-    ])
-    clf.fit(X_train, y_train)
-    return list(map(int, clf.predict(X_test)))
-
-
-def fit_predict_tree(train, test, model: str, class_weight=None, seed: int = 0) -> Optional[List[int]]:
-    """
-    model: "dt" | "rf"
-    """
-    try:
-        if model == "dt":
-            from sklearn.tree import DecisionTreeClassifier
-            clf = DecisionTreeClassifier(class_weight=class_weight, random_state=seed)
-        elif model == "rf":
-            from sklearn.ensemble import RandomForestClassifier
-            clf = RandomForestClassifier(
-                n_estimators=200,
-                class_weight=class_weight,
-                random_state=seed,
-                n_jobs=-1,
-            )
-        else:
-            return None
-    except Exception:
-        return None
-
-    X_train = [x for x, _ in train]
-    y_train = [y for _, y in train]
-    X_test = [x for x, _ in test]
-
-    clf.fit(X_train, y_train)
-    return list(map(int, clf.predict(X_test)))
-
-def fit_predict_proba_model(train, test, model_name: str, seed: int = 0):
-    """
-    model_name: "LR" | "LR_balanced" | "DT_balanced" | "RF_balanced_subsample"
-    return: probas for class=1 (List[float]) or None
-    """
-    try:
-        X_train = [x for x, _ in train]
-        y_train = [y for _, y in train]
-        X_test = [x for x, _ in test]
-    except Exception:
-        return None
-
-    # LR 계열
-    if model_name in ("LR", "LR_balanced"):
-        try:
-            from sklearn.linear_model import LogisticRegression
-            from sklearn.preprocessing import StandardScaler
-            from sklearn.pipeline import Pipeline
-        except Exception:
-            return None
-
-        cw = None if model_name == "LR" else "balanced"
-        clf = Pipeline([
-            ("scaler", StandardScaler()),
-            ("lr", LogisticRegression(max_iter=400, class_weight=cw)),
-        ])
-        clf.fit(X_train, y_train)
-        proba = clf.predict_proba(X_test)[:, 1]
-        return [float(p) for p in proba]
-
-    # Tree 계열
-    if model_name == "DT_balanced":
-        try:
-            from sklearn.tree import DecisionTreeClassifier
-        except Exception:
-            return None
-        clf = DecisionTreeClassifier(class_weight="balanced", random_state=seed)
-        clf.fit(X_train, y_train)
-        proba = clf.predict_proba(X_test)[:, 1]
-        return [float(p) for p in proba]
-
-    if model_name == "RF_balanced_subsample":
-        try:
-            from sklearn.ensemble import RandomForestClassifier
-        except Exception:
-            return None
-        clf = RandomForestClassifier(
-            n_estimators=200,
-            class_weight="balanced_subsample",
-            random_state=seed,
-            n_jobs=-1,
-        )
-        clf.fit(X_train, y_train)
-        proba = clf.predict_proba(X_test)[:, 1]
-        return [float(p) for p in proba]
-
-    return None
-
-
-def threshold_sweep_across_splits(
-    *,
-    model_name: str,
-    data: List[Tuple[List[float], int]],
-    split_mode: str,
-    split_plan,
-    K: int,
-    seed_base: int,
-    test_ratio: float,
-    thr_step: float,
-    thr_metric: str = "f1_1"
-):
-    """
-    모든 split을 돌면서 threshold별 confusion matrix를 누적한 뒤
-    f1_1이 최대가 되는 threshold를 선택.
-    """
-    thresholds = []
-    t = thr_step
-    while t < 1.0:
-        thresholds.append(round(t, 4))
-        t += thr_step
-    if 0.5 not in thresholds:
-        thresholds.append(0.5)
-        thresholds.sort()
-
-    cm_by_thr = {thr: [[0, 0], [0, 0]] for thr in thresholds}
-
-    for i in range(K):
-        split_seed = seed_base + i
-
-        if split_mode == "group" and split_plan is not None:
-            train_idx, test_idx = split_plan[i]
-            train = [data[j] for j in train_idx]
-            test = [data[j] for j in test_idx]
-        else:
-            train, test = split_xy(data, test_ratio=test_ratio, seed=split_seed)
-
-        y_test = [y for _, y in test]
-        prob = fit_predict_proba_model(train, test, model_name=model_name, seed=split_seed)
-        if prob is None:
-            return None
-
-        for thr in thresholds:
-            y_pred = [1 if p >= thr else 0 for p in prob]
-            cm = _cm_from_preds(y_test, y_pred)
-            cm_by_thr[thr] = _cm_add(cm_by_thr[thr], cm)
-
-    # threshold별 지표 계산
-    scored = []
-    for thr, cm_sum in cm_by_thr.items():
-        m = _metrics_from_cm(cm_sum)
-        scored.append((thr, m, cm_sum))
-
-    if not scored:
-        return []
-    # metric 최대 (동점이면 f1_1, recall_1로 tie-break)
-    key = thr_metric if thr_metric in scored[0][1] else "f1_1"
-    scored.sort(
-        key=lambda x: (x[1].get(key, 0.0), x[1].get("f1_1", 0.0), x[1].get("recall_1", 0.0)),
-        reverse=True,
-    )
-
-def _parse_int_list_csv(s: str) -> List[int]:
-    parts = [p.strip() for p in str(s).split(",") if p.strip()]
-    out: List[int] = []
-    for p in parts:
-        out.append(int(p))
-    return out
-
-def _parse_float_list_csv(s: str) -> List[float]:
-    parts = [p.strip() for p in str(s).split(",") if p.strip()]
-    out: List[float] = []
-    for p in parts:
-        out.append(float(p))
-    return out
-
-
-def _parse_max_depth_list_csv(s: str) -> List[int | None]:
-    parts = [p.strip() for p in str(s).split(",") if p.strip()]
-    out: List[int | None] = []
-    for p in parts:
-        if p.lower() == "none":
-            out.append(None)
-        else:
-            out.append(int(p))
-    return out
-
-
-def fit_predict_proba_rf(
-    train: List[Tuple[List[float], int]],
-    test: List[Tuple[List[float], int]],
-    *,
-    seed: int,
-    n_estimators: int,
-    max_depth: int | None,
-    min_samples_leaf: int,
-    class_weight: str = "balanced_subsample",
-) -> List[float] | None:
-    try:
-        from sklearn.ensemble import RandomForestClassifier
-    except Exception:
-        return None
-
-    X_train = [x for x, _ in train]
-    y_train = [y for _, y in train]
-    X_test = [x for x, _ in test]
-
-    clf = RandomForestClassifier(
-        n_estimators=n_estimators,
-        max_depth=max_depth,
-        min_samples_leaf=min_samples_leaf,
-        class_weight=class_weight,
-        random_state=seed,
-        n_jobs=-1,
-    )
-    clf.fit(X_train, y_train)
-    proba = clf.predict_proba(X_test)[:, 1]
-    return [float(p) for p in proba]
-
-
-def rf_threshold_sweep_across_splits(
-    *,
-    data: List[Tuple[List[float], int]],
-    split_mode: str,
-    split_plan,
-    K: int,
-    seed_base: int,
-    test_ratio: float,
-    thr_step: float,
-    n_estimators: int,
-    max_depth: int | None,
-    min_samples_leaf: int,
-    class_weight: str = "balanced_subsample",
-):
-    """
-    RF에 대해 split별로 predict_proba를 얻고, threshold sweep을 수행해
-    f1_1이 최대가 되는 threshold를 반환한다.
-    return: scored list [(thr, metrics, cm_sum), ...] or None
-    """
-    thresholds = []
-    t = thr_step
-    while t < 1.0:
-        thresholds.append(round(t, 4))
-        t += thr_step
-    if 0.5 not in thresholds:
-        thresholds.append(0.5)
-        thresholds.sort()
-
-    cm_by_thr = {thr: [[0, 0], [0, 0]] for thr in thresholds}
-
-    for i in range(K):
-        split_seed = seed_base + i
-
-        if split_mode == "group" and split_plan is not None:
-            train_idx, test_idx = split_plan[i]
-            train = [data[j] for j in train_idx]
-            test = [data[j] for j in test_idx]
-        else:
-            train, test = split_xy(data, test_ratio=test_ratio, seed=split_seed)
-
-        y_test = [y for _, y in test]
-        prob = fit_predict_proba_rf(
-            train,
-            test,
-            seed=split_seed,
-            n_estimators=n_estimators,
-            max_depth=max_depth,
-            min_samples_leaf=min_samples_leaf,
-            class_weight=class_weight,
-        )
-        if prob is None:
-            return None
-
-        for thr in thresholds:
-            y_pred = [1 if p >= thr else 0 for p in prob]
-            cm = _cm_from_preds(y_test, y_pred)
-            cm_by_thr[thr] = _cm_add(cm_by_thr[thr], cm)
-
-    scored = []
-    for thr, cm_sum in cm_by_thr.items():
-        m = _metrics_from_cm(cm_sum)
-        scored.append((thr, m, cm_sum))
-
-    scored.sort(key=lambda x: x[1]["f1_1"], reverse=True)
-    return scored
-
-
-def rf_grid_search_best_by_f1(
-    *,
-    data: List[Tuple[List[float], int]],
-    split_mode: str,
-    split_plan,
-    K: int,
-    seed_base: int,
-    test_ratio: float,
-    thr_step: float,
-    n_estimators: int,
-    depths: List[int | None],
-    min_leaves: List[int],
-    class_weight: str = "balanced_subsample",
-):
-    """
-    RF (max_depth, min_samples_leaf) 미니 그리드를 돌리고,
-    각 설정에 대해 threshold sweep(F1 최대)을 수행한 뒤
-    가장 좋은 설정을 반환한다.
-    return:
-      - best_params: dict or None
-      - best_tuned: scored list or None
-      - rows: list of dict (전체 결과, f1_1 desc 정렬)
-    """
-    rows: List[Dict[str, Any]] = []
-    best_params: Dict[str, Any] | None = None
-    best_tuned = None
-    best_score = -1.0
-
-    for d in depths:
-        for leaf in min_leaves:
-            tuned = rf_threshold_sweep_across_splits(
-                data=data,
-                split_mode=split_mode,
-                split_plan=split_plan,
-                K=K,
-                seed_base=seed_base,
-                test_ratio=test_ratio,
-                thr_step=thr_step,
-                n_estimators=n_estimators,
-                max_depth=d,
-                min_samples_leaf=leaf,
-                class_weight=class_weight,
-            )
-            if tuned is None or not tuned:
-                continue
-
-            thr, m, cm = tuned[0]
-            row = {
-                "n_estimators": n_estimators,
-                "max_depth": d,
-                "min_samples_leaf": leaf,
-                "thr": thr,
-                "acc": m["acc"],
-                "bal_acc": m["bal_acc"],
-                "f1_1": m["f1_1"],
-                "recall_1": m["recall_1"],
-                "precision_1": m["precision_1"],
-                "cm_sum": cm,
-            }
-            rows.append(row)
-
-            if m["f1_1"] > best_score:
-                best_score = m["f1_1"]
-                best_params = {
-                    "n_estimators": n_estimators,
-                    "max_depth": d,
-                    "min_samples_leaf": leaf,
-                    "class_weight": class_weight,
-                }
-                best_tuned = tuned
-
-    rows.sort(key=lambda r: r["f1_1"], reverse=True)
-    return best_params, best_tuned, rows
-
-
-def fit_full_rf_and_rank_features(
-    X: List[List[float]],
-    y: List[int],
-    feature_names: List[str],
-    *,
-    seed: int,
-    rf_params: Dict[str, Any],
-) -> Tuple[str, List[Tuple[str, float]]]:
-    """RF를 전체 데이터로 재학습 후 feature_importances_로 랭킹."""
-    try:
-        from sklearn.ensemble import RandomForestClassifier
-    except Exception:
-        return "unsupported", []
-
-    if not X or not feature_names:
-        return "unsupported", []
-    if len(X[0]) != len(feature_names):
-        m = min(len(X[0]), len(feature_names))
-        feature_names = feature_names[:m]
-        X = [row[:m] for row in X]
-
-    clf = RandomForestClassifier(
-        n_estimators=int(rf_params.get("n_estimators", 200)),
-        max_depth=rf_params.get("max_depth", None),
-        min_samples_leaf=int(rf_params.get("min_samples_leaf", 1)),
-        class_weight=rf_params.get("class_weight", "balanced_subsample"),
-        random_state=seed,
-        n_jobs=-1,
-    )
-    clf.fit(X, y)
-    importances = getattr(clf, "feature_importances_", None)
-    if importances is None:
-        return "unsupported", []
-
-    ranked = sorted(
-        [(feature_names[i], float(importances[i])) for i in range(len(feature_names))],
-        key=lambda t: t[1],
-        reverse=True,
-    )
-    return "tree_importance", ranked
-
-
-
-
-def write_report_md(
-    path: str,
-    *,
-    input_path: str,
-    n_rows: int,
-    n_usable: int,
-    label_dist: Dict[int, int],
-    test_ratio: float,
-    seed: int,
-    K: int,
-    results: Dict[str, Dict[str, Any]],
-) -> None:
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-
-    lines: List[str] = []
-    lines.append(f"# Baseline Evaluation Report\n")
-    lines.append(f"- generated_at: {datetime.datetime.now().isoformat(timespec='seconds')}\n")
-    lines.append(f"- input: {input_path}\n")
-    lines.append(f"- rows: {n_rows}\n")
-    lines.append(f"- usable_rows: {n_usable}\n")
-    lines.append(f"- label_distribution: {label_dist}\n")
-    lines.append(f"- test_ratio: {test_ratio}\n")
-    lines.append(f"- seed: {seed}\n")
-    lines.append(f"- K(splits): {K}\n\n")
-
-    lines.append("## Summary\n\n")
-    lines.append("| model | acc(mean) | bal_acc(mean) | f1_1(mean) | recall_1(mean) | precision_1(mean) | confusion_sum |\n")
-    lines.append("|---|---:|---:|---:|---:|---:|---|\n")
-
-    for name, pack in results.items():
-        s_acc = pack["acc"]
-        s_bal = pack["bal_acc"]
-        s_f1 = pack["f1_1"]
-        s_r = pack["recall_1"]
-        s_p = pack["precision_1"]
-        cm = pack["cm_sum"]
-
-        lines.append(
-            f"| {name} | {_fmt3(s_acc['mean'])} | {_fmt3(s_bal['mean'])} | {_fmt3(s_f1['mean'])} | "
-            f"{_fmt3(s_r['mean'])} | {_fmt3(s_p['mean'])} | {_fmt_cm(cm)} |\n"
-        )
-
-    with open(path, "w", encoding="utf-8") as f:
-        f.writelines(lines)
-
-def write_fixed_test_report_md(
-    path: str,
-    *,
-    train_path: str,
-    test_path: str,
-    n_train_rows: int,
-    n_train_usable: int,
-    n_test_rows: int,
-    n_test_usable: int,
-    group_key: str,
-    dropped_overlap: int,
-    best_model: str,
-    threshold: float,
-    results: Dict[str, Any],
-    details: List[Dict[str, Any]] | None = None
-) -> None:
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-
-    lines: List[str] = []
-    lines.append(f"# Fixed Test Evaluation Report\n\n")
-    lines.append(f"- generated_at: {datetime.datetime.now().isoformat(timespec='seconds')}\n")
-    lines.append(f"- train: {train_path}\n")
-    lines.append(f"- test: {test_path}\n")
-    lines.append(f"- train_rows: {n_train_rows} (usable={n_train_usable})\n")
-    lines.append(f"- test_rows: {n_test_rows} (usable={n_test_usable})\n")
-    lines.append(f"- group_key: {group_key}\n")
-    if dropped_overlap:
-        lines.append(f"- dropped_overlap_groups: {dropped_overlap}\n")
-    lines.append("\n")
-
-    lines.append("## Best Model\n\n")
-    lines.append(f"- best: {best_model}\n")
-    lines.append(f"- threshold: {threshold:.2f}\n\n")
-
-    lines.append("## Metrics\n\n")
-    m = results["metrics"]
-    cm = results["cm"]
-    lines.append(f"- acc: {m['acc']:.4f}\n")
-    lines.append(f"- bal_acc: {m['bal_acc']:.4f}\n")
-    lines.append(f"- f1_1: {m['f1_1']:.4f}\n")
-    lines.append(f"- recall_1: {m['recall_1']:.4f}\n")
-    lines.append(f"- precision_1: {m['precision_1']:.4f}\n")
-    lines.append(f"- cm: {_fmt_cm(cm)}\n\n")
-
-    lines.append("## Confusion Matrix\n\n")
-    lines.append("| | pred=0 | pred=1 |\n")
-    lines.append("|---|---:|---:|\n")
-    lines.append(f"| true=0 | {cm[0][0]} | {cm[0][1]} |\n")
-    lines.append(f"| true=1 | {cm[1][0]} | {cm[1][1]} |\n")
-
-    if details:
-        lines.append("\n## Per-scenario predictions\n\n")
-        lines.append("| idx | title | pair_key | type | n | dist | y | pred | p1 | ok |\n")
-        lines.append("|---:|---|---|---|---:|---:|---:|---:|---:|:--:|\n")
-        for i, d in enumerate(details, start=1):
-            title = str(d.get("scenario_title","")).replace("|","/")
-            pair_key = str(d.get("pair_key","")).replace("|","/")
-            et = d.get("encounter_type","")
-            n = d.get("defender_count","")
-            dist = d.get("start_distance","")
-            y = d.get("y_true","")
-            pred = d.get("y_pred","")
-            p1 = d.get("proba_1", None)
-            p1s = "" if p1 is None else f"{p1:.4f}"
-            ok = "✅" if d.get("ok") else "❌"
-            lines.append(f"| {i} | {title} | {pair_key} | {et} | {n} | {dist} | {y} | {pred} | {p1s} | {ok} |\n")
-
-        wrong = [d for d in details if not d.get("ok")]
-        lines.append("\n## Errors only\n\n")
-        if not wrong:
-            lines.append("- (none)\n")
-        else:
-            for d in wrong:
-                lines.append(f"- {d.get('scenario_title')} / pair={d.get('pair_key')} y={d.get('y_true')} pred={d.get('y_pred')} p1={d.get('proba_1')}\n")
-
-    with open(path, "w", encoding="utf-8") as f:
-        f.writelines(lines)
-
-from typing import Tuple
-
-def pick_best_model(packed: Dict[str, Dict[str, Any]], metric_key: str = "f1_1") -> str:
-    """
-    packed[name][metric_key]['mean']이 가장 큰 모델을 선택.
-    MAJORITY 계열은 제외.
-    """
-    best_name = ""
-    best_score = -1.0
-    for name, pck in packed.items():
-        if name.startswith("MAJORITY"):
+    if s == "balanced":
+        return "balanced"
+    # "0:1,1:3" 형태
+    out = {}
+    for part in s.split(","):
+        part = part.strip()
+        if not part:
             continue
-        score = pck.get(metric_key, {}).get("mean", -1.0)
-        if score > best_score:
-            best_score = score
-            best_name = name
-    return best_name
+        k, v = part.split(":")
+        out[int(k.strip())] = float(v.strip())
+    return out
 
 
-def fit_full_model_and_rank_features(
-    model_name: str,
-    X: List[List[float]],
-    y: List[int],
-    feature_names: List[str],
-    seed: int,
-) -> Tuple[str, List[Tuple[str, float]]]:
-    """
-    best 모델을 전체 데이터로 재학습하고, feature importance(또는 coef 절대값) Top을 반환.
-    return: (kind, [(feature, score), ...])
-      kind: "lr_coef_abs" | "tree_importance" | "unsupported"
-    """
-    # 길이 불일치 방지
-    if not X or not feature_names:
-        return "unsupported", []
-    if len(X[0]) != len(feature_names):
-        print(f"[WARN] FEATURE_NAMES length mismatch: x_dim={len(X[0])} names={len(feature_names)}")
-        # 그래도 가능한 범위까지만 자르기
-        m = min(len(X[0]), len(feature_names))
-        feature_names = feature_names[:m]
-        X = [row[:m] for row in X]
+def main():
+    ap = argparse.ArgumentParser()
 
-    # ---- Logistic Regression 계열 ----
-    if model_name in ("LR", "LR_balanced"):
+    # 기존 호출 깨질 수 있어서 alias 여러 개 지원
+    ap.add_argument("--dataset", "--dataset_path", "--csv", dest="dataset_path", required=True)
+
+    ap.add_argument("--split_mode", choices=["random", "group"], default="group")
+    ap.add_argument("--group_key", default="pair_key")
+    ap.add_argument("--group_stratified", action="store_true")
+    ap.add_argument("--tries", type=int, default=200)
+
+    ap.add_argument("--test_ratio", type=float, default=0.2)
+    ap.add_argument("--val_ratio", type=float, default=0.2)
+
+    ap.add_argument("--seed_base", type=int, default=42)
+    ap.add_argument("--repeats", type=int, default=20)
+    ap.add_argument("--fixed_test", action="store_true")
+
+    ap.add_argument("--model", choices=["majority", "logreg"], default="logreg")
+    ap.add_argument("--class_weight", default="balanced")  # balanced / none / "0:1,1:3"
+    ap.add_argument("--C", type=float, default=1.0)
+    ap.add_argument("--max_iter", type=int, default=2000)
+    ap.add_argument("--solver", default="lbfgs")
+
+    ap.add_argument("--tune_threshold", action="store_true")
+    ap.add_argument("--threshold_metric", choices=["f1", "recall", "precision", "bal_acc"], default="f1")
+
+    ap.add_argument("--report_dir", default="reports")
+    ap.add_argument("--report_name", default="")
+
+    ap.add_argument("--label_col", default="")
+    ap.add_argument("--drop_ties", action="store_true")
+
+    ap.add_argument("--shuffle_labels", action="store_true")
+    ap.add_argument("--shuffle_seed", type=int, default=123)
+
+    ap.add_argument("--drop_adv_features", action="store_true")
+    ap.add_argument("--drop_perk_features", action="store_true")
+
+    ap.add_argument("--thr_min", type=float, default=0.05)
+    ap.add_argument("--thr_max", type=float, default=0.95)
+    ap.add_argument("--thr_steps", type=int, default=91)
+
+    ap.add_argument("--fixed_thr", type=float, default=None)
+
+    args = ap.parse_args()
+
+    df = pd.read_csv(args.dataset_path, low_memory=False)
+
+    # 1) label column 결정 (없으면 wins/rate로 파생 생성)
+    label_col = args.label_col.strip() if hasattr(args, "label_col") else ""
+
+    if label_col and (label_col not in df.columns):
+        raise ValueError(f"[train_baseline] --label_col='{label_col}' not found in csv columns")
+
+    if not label_col:
         try:
-            from sklearn.linear_model import LogisticRegression
-            from sklearn.preprocessing import StandardScaler
-            from sklearn.pipeline import Pipeline
-        except Exception:
-            return "unsupported", []
-
-        cw = None if model_name == "LR" else "balanced"
-
-        clf = Pipeline([
-            ("scaler", StandardScaler()),
-            ("lr", LogisticRegression(max_iter=400, class_weight=cw)),
-        ])
-        clf.fit(X, y)
-
-        lr = clf.named_steps["lr"]
-        coefs = lr.coef_[0]  # shape: (n_features,)
-        ranked = sorted(
-            [(feature_names[i], abs(float(coefs[i]))) for i in range(len(feature_names))],
-            key=lambda t: t[1],
-            reverse=True,
-        )
-        return "lr_coef_abs", ranked
-
-    # ---- Tree 계열 ----
-    if model_name in ("DT_balanced", "RF_balanced_subsample"):
-        try:
-            if model_name == "DT_balanced":
-                from sklearn.tree import DecisionTreeClassifier
-                clf = DecisionTreeClassifier(class_weight="balanced", random_state=seed)
+            label_col = resolve_label_col(df.columns)
+        except ValueError:
+            # label이 없다면 자동 파생 생성
+            if ("wins_defender" in df.columns) and ("wins_attacker" in df.columns):
+                # defender 승수가 attacker 승수보다 많으면 label=1
+                if getattr(args, "drop_ties", False):
+                    df = df[df["wins_defender"] != df["wins_attacker"]].copy()
+                df["_label"] = (df["wins_defender"] > df["wins_attacker"]).astype(int)
+                label_col = "_label"
+            elif ("defender_win_rate" in df.columns) and ("attacker_win_rate" in df.columns):
+                # defender win_rate가 더 크면 label=1
+                if getattr(args, "drop_ties", False):
+                    df = df[np.abs(df["defender_win_rate"] - df["attacker_win_rate"]) > 1e-12].copy()
+                df["_label"] = (df["defender_win_rate"] > df["attacker_win_rate"]).astype(int)
+                label_col = "_label"
             else:
-                from sklearn.ensemble import RandomForestClassifier
-                clf = RandomForestClassifier(
-                    n_estimators=200,
-                    class_weight="balanced_subsample",
-                    random_state=seed,
-                    n_jobs=-1,
-                )
-        except Exception:
-            return "unsupported", []
-
-        clf.fit(X, y)
-        importances = getattr(clf, "feature_importances_", None)
-        if importances is None:
-            return "unsupported", []
-
-        ranked = sorted(
-            [(feature_names[i], float(importances[i])) for i in range(len(feature_names))],
-            key=lambda t: t[1],
-            reverse=True,
-        )
-        return "tree_importance", ranked
-
-    return "unsupported", []
-
-
-
-def eval_rule_baseline(train: List[Tuple[List[float], int]], test: List[Tuple[List[float], int]]) -> None:
-    # 규칙 베이스라인: (ATK 차이) + 0.25*(HP 차이) + 0.5*(Range 차이) > 0 이면 attacker가 더 좋다
-    def predict(x: List[float]) -> int:
-        # x 구성: [a...5, d...5, deltas...5]
-        dhp = x[10]
-        datk = x[11]
-        drng = x[12]
-        score = datk + 0.25 * dhp + 0.5 * drng
-        return 1 if score > 0 else 0
-
-    def acc(dataset: List[Tuple[List[float], int]]) -> float:
-        c = 0
-        for x, y in dataset:
-            c += (predict(x) == y)
-        return c / max(1, len(dataset))
-
-    print("[RULE BASELINE]")
-    print(f"- train_acc: {acc(train):.4f}")
-    print(f"- test_acc : {acc(test):.4f}")
-
-def lr_scores(train, test, class_weight=None):
-    """
-    sklearn LogisticRegression을 학습하고 점수만 반환(출력 X)
-    return: (train_acc, test_acc, test_bal_acc) or None
-    """
-    try:
-        from sklearn.linear_model import LogisticRegression
-        from sklearn.preprocessing import StandardScaler
-        from sklearn.pipeline import Pipeline
-        from sklearn.metrics import balanced_accuracy_score
-    except Exception:
-        return None
-
-    X_train = [x for x, _ in train]
-    y_train = [y for _, y in train]
-    X_test = [x for x, _ in test]
-    y_test = [y for _, y in test]
-
-    clf = Pipeline([
-        ("scaler", StandardScaler()),
-        ("lr", LogisticRegression(max_iter=400, class_weight=class_weight)),
-    ])
-    clf.fit(X_train, y_train)
-
-    train_acc = clf.score(X_train, y_train)
-    test_acc = clf.score(X_test, y_test)
-
-    y_pred = clf.predict(X_test)
-    test_bal = balanced_accuracy_score(y_test, y_pred)
-
-    return train_acc, test_acc, test_bal
-
-
-
-def eval_sklearn_if_available(train: List[Tuple[List[float], int]], test: List[Tuple[List[float], int]]) -> bool:
-    try:
-        from sklearn.linear_model import LogisticRegression
-        from sklearn.preprocessing import StandardScaler
-        from sklearn.pipeline import Pipeline
-    except Exception:
-        return False
-
-    X_train = [x for x, _ in train]
-    y_train = [y for _, y in train]
-    X_test = [x for x, _ in test]
-    y_test = [y for _, y in test]
-
-    clf = Pipeline([
-        ("scaler", StandardScaler()),
-        ("lr", LogisticRegression(max_iter=300)),
-    ])
-    clf.fit(X_train, y_train)
-
-    train_acc = clf.score(X_train, y_train)
-    test_acc = clf.score(X_test, y_test)
-
-    print("[SKLEARN LogisticRegression]")
-    print(f"- train_acc: {train_acc:.4f}")
-    print(f"- test_acc : {test_acc:.4f}")
-    return True
-
-
-def main() -> None:
-    p = argparse.ArgumentParser(allow_abbrev=False)
-    p.add_argument("--input", default="datasets/battle_dataset_v1.csv")
-    p.add_argument("--train", default="", help="학습(train) CSV 경로. 지정 시 --input 대신 사용")
-    p.add_argument("--test", default="", help="고정 테스트(test) CSV 경로. 지정 시 train 전체로 학습 후 test 평가를 추가로 수행")
-    p.add_argument("--report-test", default="", help="고정 테스트 평가 리포트 저장 경로")
-    p.add_argument("--drop-overlap-groups", action="store_true",
-                   help="train/test 간 group_key가 겹치는 test row 제거(누수 방지)")
-    p.add_argument("--k", type=int, default=10, help="반복 split 횟수 K (default=10)")
-    p.add_argument("--test-ratio", type=float, default=0.2)
-    p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--report", default="", help="md 리포트 저장 경로(비우면 reports/baseline_eval_YYYYMMDD.md)")
-    p.add_argument("--group", action="store_true", help="GroupShuffleSplit로 (attacker,defender) 조합 단위 분할")
-    p.add_argument("--group-key", default="pair_key", help="그룹 분할에 사용할 CSV 컬럼명 (default: pair_key)")
-    p.add_argument("--group-stratified", action="store_true", 
-                   help="그룹 단위로 split하되(조합 분리), 그룹 라벨(다수결) 기준으로 stratified sampling 적용")
-    p.add_argument("--tune-threshold", action="store_true", help="best 모델에 대해 threshold sweep으로 F1_1 최대 threshold 찾기")
-    p.add_argument("--thr-step", type=float, default=0.05, help="threshold sweep step (default=0.05)")
-    # FIXED_TEST(고정 테스트)에서 threshold를 별도로 진단/조정하고 싶을 때
-    p.add_argument("--fixed-threshold", type=float, default=None,
-                   help="FIXED_TEST 평가 시 threshold를 강제로 지정(기본은 튜닝 결과/0.5 사용)")
-    p.add_argument("--fixed-threshold-sweep", action="store_true",
-                   help="FIXED_TEST에서 threshold sweep 후 최적 threshold를 선택(진단용; 평가 누수 주의)")
-    p.add_argument("--fixed-threshold-metric",
-                   choices=["f1_1", "bal_acc", "recall_1", "precision_1", "acc"],
-                   default="bal_acc",
-                   help="FIXED_TEST threshold sweep에서 최적화할 지표(기본 bal_acc)")
-    p.add_argument("--fixed-threshold-topn", type=int, default=5,
-               help="FIXED_TEST threshold sweep 결과 상위 N개 출력(기본 5)")
-    p.add_argument("--fixed-thresholds", default="",
-                   help="FIXED_TEST에서 지정 threshold들을 진단 출력. 예: 0.2,0.3,0.4,0.48")
-    p.add_argument("--thr-metric", choices=["f1_1","bal_acc","recall_1","precision_1"],
-                   default="f1_1", help="threshold 선택 기준 (default=f1_1)")
-    p.add_argument("--rf-grid", action="store_true",
-                   help="RF 미니 그리드 탐색(max_depth/min_samples_leaf) + threshold 재튜닝(=F1 최대)")
-    p.add_argument("--save-model", default="", help="path to save final trained model (joblib). empty = no save")
-    p.add_argument("--save-meta", default="", help="path to save model meta (json). default: <save-model>.meta.json")
-    p.add_argument("--final-model", default="BEST",
-                    choices=["BEST","LR","LR_balanced","DT_balanced","RF_balanced_subsample"],
-                    help="which model to train for final save (BEST=use selected best model)")
-    p.add_argument("--final-threshold", type=float, default=None,
-                    help="override threshold for saved model. default=None uses tuned best threshold if available else 0.5")
-    p.add_argument("--rf-depths", default="None,8,12",
-                   help="RF max_depth 후보(콤마). 예: None,8,12")
-    p.add_argument("--rf-min-leaves", default="1,2,4",
-                   help="RF min_samples_leaf 후보(콤마). 예: 1,2,4")
-    p.add_argument("--rf-estimators", type=int, default=200,
-                   help="RF n_estimators (default=200)")
-    p.add_argument("--rf-topn", type=int, default=8,
-                   help="리포트에 남길 RF grid 상위 N개 (default=8)")
-
-    args = p.parse_args()
-
-    train_path = (args.train.strip() if isinstance(args.train, str) else "") or args.input
-    global PERK_IDS
-    rows = load_csv(train_path)
-    PERK_IDS = detect_perk_ids(rows)
-    rebuild_feature_schema()
-
-    data: List[Tuple[List[float], int]] = []
-    groups: List[str] = []
-    mismatch = 0
-    for idx, row in enumerate(rows):
-        item = build_features(row)
-        if item is None:
-            continue
-        x, y = item
-        if len(x) != len(FEATURE_NAMES):
-            mismatch += 1
-            if mismatch <= 5:
-                print(f"[WARN] feature length mismatch at row {idx}: x={len(x)} names={len(FEATURE_NAMES)}")
-            continue
-
-        # group key 수집(없으면 a_name/d_name으로 fallback)
-        g = row.get(args.group_key)
-        if not isinstance(g, str) or not g.strip():
-            a = row.get("a_name")
-            d = row.get("d_name")
-            if isinstance(a, str) and isinstance(d, str) and a.strip() and d.strip():
-                g = f"{a.strip()}__vs__{d.strip()}"
-            else:
-                # 마지막 fallback: 행 단위(그룹 분할 의미는 약해지지만 크래시 방지)
-                g = f"row_{idx}"
-
-        data.append(item)
-        groups.append(g)
-
-    if mismatch:
-        print(f"[WARN] feature length mismatch rows skipped: {mismatch}")
-    print(f"[INFO] input rows: {len(rows)}")
-    print(f"[INFO] usable rows: {len(data)}")
-
-    ys = [y for _, y in data]
-    print(f"[INFO] label distribution: {dict(Counter(ys))}")
-
-    # 전체 기준 다수 클래스 baseline(참고용)
-    majority = 1 if ys.count(1) > ys.count(0) else 0
-    majority_acc_all = sum(1 for y in ys if y == majority) / len(ys)
-    print(f"[MAJORITY BASELINE / ALL] always={majority} acc={majority_acc_all:.4f}")
-
-    if len(data) < 10:
-        print("[WARN] usable rows too small. Run more scenarios/experiments first.")
-        return
-
-    # ===== 반복 평가(운빨 줄이기) =====
-    K = int(args.k)
-
-    # 모델별 결과 수집 컨테이너
-    model_names = [
-        "MAJORITY_SPLIT",
-        "LR",
-        "LR_balanced",
-        "DT_balanced",
-        "RF_balanced_subsample",
-    ]
-
-    results: Dict[str, Dict[str, Any]] = {}
-    for name in model_names:
-        results[name] = {
-            "acc": [],
-            "bal_acc": [],
-            "precision_1": [],
-            "recall_1": [],
-            "f1_1": [],
-            "cm_sum": [[0, 0], [0, 0]],
-            "available": True,
-        }
-
-    def _record(name: str, y_true: List[int], y_pred: List[int]) -> None:
-        cm = _cm_from_preds(y_true, y_pred)
-        m = _metrics_from_cm(cm)
-        results[name]["acc"].append(m["acc"])
-        results[name]["bal_acc"].append(m["bal_acc"])
-        results[name]["precision_1"].append(m["precision_1"])
-        results[name]["recall_1"].append(m["recall_1"])
-        results[name]["f1_1"].append(m["f1_1"])
-        results[name]["cm_sum"] = _cm_add(results[name]["cm_sum"], cm)
-
-    # ===== split 계획 수립 =====
-    split_mode = "random"
-    n_groups = 0
-    split_plan = None
-
-    if args.group:
-        try:
-            from sklearn.model_selection import GroupShuffleSplit
-        except Exception:
-            print("[WARN] sklearn not available. fallback to random split.")
-            args.group = False
-        else:
-            split_mode = "group"
-            n_groups = len(set(groups))
-            print(f"[INFO] split mode: GROUP key={args.group_key} groups={n_groups}")
-
-            X_all = [x for x, _ in data]
-            y_all = [y for _, y in data]
-
-            if args.group_stratified:
-                # ---- 그룹 단위 + 라벨 비율 완화(그룹 라벨 다수결로 stratify) ----
-                from sklearn.model_selection import StratifiedShuffleSplit
-
-                # group -> indices
-                group_to_indices: Dict[str, List[int]] = {}
-                for idx, g in enumerate(groups):
-                    group_to_indices.setdefault(g, []).append(idx)
-
-                uniq_groups = list(group_to_indices.keys())
-
-                # 그룹 라벨: 그룹 내 y 다수결(동률이면 1)
-                group_labels: List[int] = []
-                for g in uniq_groups:
-                    ys_g = [y_all[i] for i in group_to_indices[g]]
-                    ones = sum(ys_g)
-                    zeros = len(ys_g) - ones
-                    group_labels.append(1 if ones >= zeros else 0)
-
-                sss = StratifiedShuffleSplit(
-                    n_splits=K, test_size=args.test_ratio, random_state=args.seed
+                raise ValueError(
+                    "[train_baseline] label column not found, and cannot derive label. "
+                    "Need (wins_defender & wins_attacker) or (defender_win_rate & attacker_win_rate)."
                 )
 
-                split_plan = []
-                for train_g_idx, test_g_idx in sss.split(uniq_groups, group_labels):
-                    train_groups = [uniq_groups[i] for i in train_g_idx]
-                    test_groups = [uniq_groups[i] for i in test_g_idx]
+    # 2) group column / features 결정
+    group_col = resolve_group_col(df.columns, args.group_key) if args.split_mode == "group" else None
+    feat_cols = select_feature_cols(df, label_col, group_col, args.drop_adv_features, args.drop_perk_features)
 
-                    train_idx = [i for g in train_groups for i in group_to_indices[g]]
-                    test_idx = [i for g in test_groups for i in group_to_indices[g]]
-                    split_plan.append((train_idx, test_idx))
+    needed = feat_cols + [label_col] + ([group_col] if group_col else [])
+    df = df.dropna(subset=needed).reset_index(drop=True)
 
-                print("[INFO] group-stratified: enabled")
-            else:
-                gss = GroupShuffleSplit(n_splits=K, test_size=args.test_ratio, random_state=args.seed)
-                split_plan = list(gss.split(X_all, y_all, groups))
+    X = df[feat_cols].to_numpy(dtype=float)
+    y = df[label_col].astype(int).to_numpy()
 
+    if args.shuffle_labels:
+        rng = np.random.RandomState(args.shuffle_seed)
+        y = rng.permutation(y)
+        print(f"[SANITY] labels shuffled (seed={args.shuffle_seed})")
 
-    if split_mode == "random":
-        print(f"[INFO] split mode: RANDOM seed_base={args.seed} test_ratio={args.test_ratio}")
+    groups = df[group_col].astype(str).to_numpy() if group_col else None
 
+    dist0 = int(np.sum(y == 0))
+    dist1 = int(np.sum(y == 1))
+    majority_class = 0 if dist0 >= dist1 else 1
+
+    fixed_test_groups: Optional[np.ndarray] = None
+    fixed_test_pos_rate: Optional[float] = None
+    if args.split_mode == "group" and args.fixed_test:
+        assert groups is not None
+        base_split = pick_group_split_stratified(
+            y=y,
+            groups=groups,
+            seed=args.seed_base,
+            test_ratio=args.test_ratio,
+            val_ratio=args.val_ratio,
+            tries=args.tries if args.group_stratified else 1,
+        )
+        fixed_test_groups = np.unique(groups[base_split.test_idx])
+        fixed_test_pos_rate = base_split.test_pos_rate
+
+    metrics_runs: List[Dict[str, float]] = []
     test_pos_rates: List[float] = []
-    overlap_test_group_rates: List[float] = []
+    thr_list: List[float] = []
+    cm_sum = np.zeros((2, 2), dtype=int)
 
-    for i in range(K):
-        split_seed = args.seed + i
+    for i in range(args.repeats):
+        seed = args.seed_base + i
 
-        if split_mode == "group" and split_plan is not None:
-            train_idx, test_idx = split_plan[i]
-            train = [data[j] for j in train_idx]
-            test = [data[j] for j in test_idx]
+        if args.split_mode == "random":
+            split = random_split_stratified(y, seed, args.test_ratio, args.val_ratio)
         else:
-            train_idx, test_idx = _split_indices(len(data), test_ratio=args.test_ratio, seed=split_seed)
-            train = [data[j] for j in train_idx]
-            test = [data[j] for j in test_idx]
+            assert groups is not None
+            split = pick_group_split_stratified(
+                y=y,
+                groups=groups,
+                seed=seed,
+                test_ratio=args.test_ratio,
+                val_ratio=args.val_ratio,
+                tries=args.tries if args.group_stratified else 1,
+                fixed_test_groups=fixed_test_groups,
+            )
 
-            # RANDOM split이지만 group_key 관점에서 train/test가 얼마나 겹치는지(누수/과대평가 가능성) 참고 출력용
-            train_g = {groups[j] for j in train_idx}
-            test_g = {groups[j] for j in test_idx}
-            overlap = len(train_g & test_g)
-            overlap_test_group_rates.append(overlap / max(1, len(test_g)))
+        test_pos_rates.append(split.test_pos_rate)
 
-        X_test = [x for x, _ in test]
-        y_test = [y for _, y in test]
+        X_tr, y_tr = X[split.train_idx], y[split.train_idx]
+        X_va, y_va = X[split.val_idx], y[split.val_idx]
+        X_te, y_te = X[split.test_idx], y[split.test_idx]
 
-        # test 라벨(1) 비율 기록(분포 흔들림 체크)
-        if len(y_test) > 0:
-            test_pos_rates.append(sum(y_test) / len(y_test))
-
-        # ---- MAJORITY baseline (훈련셋 기준) ----
-        y_train = [y for _, y in train]
-        maj = 1 if y_train.count(1) > y_train.count(0) else 0
-        y_pred_maj = [maj] * len(y_test)
-        _record("MAJORITY_SPLIT", y_test, y_pred_maj)
-
-        # ---- LogisticRegression ----
-        pred = fit_predict_lr(train, test, class_weight=None, seed=split_seed)
-        if pred is None:
-            results["LR"]["available"] = False
-        else:
-            _record("LR", y_test, pred)
-
-        pred = fit_predict_lr(train, test, class_weight="balanced", seed=split_seed)
-        if pred is None:
-            results["LR_balanced"]["available"] = False
-        else:
-            _record("LR_balanced", y_test, pred)
-
-        # ---- DecisionTree / RandomForest ----
-        pred = fit_predict_tree(train, test, model="dt", class_weight="balanced", seed=split_seed)
-        if pred is None:
-            results["DT_balanced"]["available"] = False
-        else:
-            _record("DT_balanced", y_test, pred)
-
-        pred = fit_predict_tree(train, test, model="rf", class_weight="balanced_subsample", seed=split_seed)
-        if pred is None:
-            results["RF_balanced_subsample"]["available"] = False
-        else:
-            _record("RF_balanced_subsample", y_test, pred)
-
-    if test_pos_rates:
-        s = _summ(test_pos_rates)
-        print("[INFO] test_pos_rate (label=1) / SPLIT")
-        print(f"- mean={_fmt3(s['mean'])} min={_fmt3(s['min'])} max={_fmt3(s['max'])}")
-        print()
-
-    if split_mode == "random" and overlap_test_group_rates:
-        s = _summ(overlap_test_group_rates)
-        print("[INFO] group overlap (RANDOM split) / TEST groups")
-        print(f"- mean={_fmt3(s['mean'])} min={_fmt3(s['min'])} max={_fmt3(s['max'])}")
-        print()
-
-    # ---- 요약 출력 ----
-    packed: Dict[str, Dict[str, Any]] = {}
-    for name in model_names:
-        if not results[name]["available"]:
+        if args.model == "majority":
+            y_pred = np.full_like(y_te, majority_class)
+            cm_sum += confusion_matrix(y_te, y_pred, labels=[0, 1])
+            metrics_runs.append(compute_metrics(y_te, y_pred))
             continue
 
-        packed[name] = {
-            "acc": _summ(results[name]["acc"]),
-            "bal_acc": _summ(results[name]["bal_acc"]),
-            "precision_1": _summ(results[name]["precision_1"]),
-            "recall_1": _summ(results[name]["recall_1"]),
-            "f1_1": _summ(results[name]["f1_1"]),
-            "cm_sum": results[name]["cm_sum"],
-        }
+        cw = parse_class_weight(args.class_weight)
 
-    # 콘솔 출력(모델별)
-    for name, pck in packed.items():
-        print(f"[{name}]")
-        print(f"- acc      mean={_fmt3(pck['acc']['mean'])} min={_fmt3(pck['acc']['min'])} max={_fmt3(pck['acc']['max'])}")
-        print(f"- bal_acc  mean={_fmt3(pck['bal_acc']['mean'])} min={_fmt3(pck['bal_acc']['min'])} max={_fmt3(pck['bal_acc']['max'])}")
-        print(f"- f1_1     mean={_fmt3(pck['f1_1']['mean'])} min={_fmt3(pck['f1_1']['min'])} max={_fmt3(pck['f1_1']['max'])}")
-        print(f"- recall_1 mean={_fmt3(pck['recall_1']['mean'])} min={_fmt3(pck['recall_1']['min'])} max={_fmt3(pck['recall_1']['max'])}")
-        print(f"- prec_1   mean={_fmt3(pck['precision_1']['mean'])} min={_fmt3(pck['precision_1']['min'])} max={_fmt3(pck['precision_1']['max'])}")
-        print(f"- cm_sum   {_fmt_cm(pck['cm_sum'])}")
-        print()
+        pipe = Pipeline(
+            [
+                ("scaler", StandardScaler()),
+                (
+                    "clf",
+                    LogisticRegression(
+                        C=args.C,
+                        class_weight=cw,
+                        max_iter=args.max_iter,
+                        solver=args.solver,
+                    ),
+                ),
+            ]
+        )
+        pipe.fit(X_tr, y_tr)
 
-    kind = "unsupported"
-    ranked: List[Tuple[str, float]] = []
+        thr = 0.5
+        va_score = pipe.predict_proba(X_va)[:, 1]
 
-    # ===== best 모델 선택(F1_1 기준) =====
-    best = pick_best_model(packed, metric_key="f1_1")
-    if not best:
-        print("[WARN] no best model selected.")
+        if args.fixed_thr is not None:
+            thr = float(args.fixed_thr)
+        elif args.tune_threshold:
+            thr, _ = tune_threshold(
+                y_va, va_score,
+                metric=args.threshold_metric,
+                thr_min=args.thr_min,
+                thr_max=args.thr_max,
+                thr_steps=args.thr_steps,
+            )
+        thr_list.append(float(thr))
+
+        te_score = pipe.predict_proba(X_te)[:, 1]
+        y_pred = (te_score >= thr).astype(int)
+
+        cm_sum += confusion_matrix(y_te, y_pred, labels=[0, 1])
+        m = compute_metrics(y_te, y_pred, y_score=te_score)
+        m["thr"] = float(thr)
+        metrics_runs.append(m)
+
+    keys = ["acc", "bal_acc", "f1_1", "recall_1", "prec_1"]
+    if args.model != "majority":
+        keys += ["ap", "roc_auc", "thr"]
+
+    summary = {k: summarize([m.get(k, float("nan")) for m in metrics_runs]) for k in keys}
+    tpr_stats = summarize(test_pos_rates)
+
+    os.makedirs(args.report_dir, exist_ok=True)
+
+    date = today_yyyymmdd()
+    if args.report_name:
+        report_name = args.report_name
     else:
-        print(f"[BEST MODEL] by f1_1 mean: {best} (f1_1_mean={packed[best]['f1_1']['mean']:.4f})")
-
-        # 전체 데이터로 재학습 + feature 랭킹
-        X_all = [x for x, _ in data]
-        y_all = [yy for _, yy in data]
-
-        kind, ranked = fit_full_model_and_rank_features(
-            best,
-            X_all,
-            y_all,
-            FEATURE_NAMES,
-            seed=args.seed,
-        )
-
-        topk = 12
-        if ranked:
-            print(f"[TOP FEATURES] ({kind}) top {topk}")
-            for name, score in ranked[:topk]:
-                print(f"- {name}: {score:.6f}")
+        parts = [f"baseline_eval_{date}"]
+        if args.split_mode == "group":
+            parts.append(f"group_{args.group_key}")
+            if args.group_stratified:
+                parts.append("strat")
+            if args.fixed_test:
+                parts.append("fixedtest")
         else:
-            print("[INFO] feature ranking unavailable.")
+            parts.append("random")
 
-    # ===== Threshold 튜닝(확률 기반) =====
-    tuned = None
-    if args.tune_threshold and best:
-        # predict_proba 지원 모델만
-        if best in ("LR", "LR_balanced", "DT_balanced", "RF_balanced_subsample"):
-            tuned = threshold_sweep_across_splits(
-                model_name=best,
-                data=data,
-                split_mode=split_mode,
-                split_plan=split_plan,
-                K=K,
-                seed_base=args.seed,
-                test_ratio=args.test_ratio,
-                thr_step=args.thr_step,
-                thr_metric=args.thr_metric,
-            )
-            if tuned is None:
-                print("[WARN] threshold tuning skipped (predict_proba not available).")
-            else:
-                thr, m, cm = tuned[0]
-                print(f"[BEST THRESHOLD] model={best} thr={thr:.2f} f1_1={m['f1_1']:.4f} "
-                      f"recall_1={m['recall_1']:.4f} prec_1={m['precision_1']:.4f} bal_acc={m['bal_acc']:.4f}")
-                print(f"- cm_sum {_fmt_cm(cm)}")
-        else:
-            print("[INFO] threshold tuning not supported for this best model.")
+        if args.model == "logreg" and args.tune_threshold:
+            parts.append("thr")
 
+        report_name = "_".join(parts) + ".md"
 
+    report_path = os.path.join(args.report_dir, report_name)
 
-    # ===== RF 미니 그리드 탐색 + threshold 재튜닝(선택) =====
-    rf_grid_params: Dict[str, Any] | None = None
-    rf_grid_best_row: Dict[str, Any] | None = None
-    rf_grid_rows: List[Dict[str, Any]] | None = None
+    lines: List[str] = []
+    lines.append(f"# Baseline Eval ({date})")
+    lines.append("")
+    lines.append("## Data")
+    lines.append(f"- dataset: `{args.dataset_path}`")
+    lines.append(f"- rows: {len(y)}")
+    lines.append(f"- label distribution: {{0: {dist0}, 1: {dist1}}}")
+    lines.append("")
+    lines.append("## Split")
+    lines.append(f"- split_mode: {args.split_mode}")
+    if args.split_mode == "group":
+        lines.append(f"- group_key: {group_col}")
+        lines.append(f"- group_stratified: {bool(args.group_stratified)} (tries={args.tries})")
+        lines.append(f"- fixed_test: {bool(args.fixed_test)}")
+        if fixed_test_groups is not None:
+            lines.append(f"- fixed_test_groups: {len(fixed_test_groups)}")
+            lines.append(f"- fixed_test_pos_rate: {fixed_test_pos_rate:.4f}")
+    lines.append(f"- test_ratio: {args.test_ratio}")
+    lines.append(f"- val_ratio: {args.val_ratio}")
+    lines.append(f"- repeats: {args.repeats} (seed_base={args.seed_base})")
+    lines.append("")
+    lines.append("### test_pos_rate (label=1) / SPLIT")
+    lines.append(f"- mean={tpr_stats['mean']:.4f} min={tpr_stats['min']:.4f} max={tpr_stats['max']:.4f}")
+    lines.append("")
 
-    if args.rf_grid:
-        try:
-            depths = _parse_max_depth_list_csv(args.rf_depths)
-            leaves = _parse_int_list_csv(args.rf_min_leaves)
-        except Exception as e:
-            print(f"[WARN] rf-grid parse failed: {e}")
-        else:
-            rf_grid_params, rf_grid_best_tuned, rf_grid_rows = rf_grid_search_best_by_f1(
-                data=data,
-                split_mode=split_mode,
-                split_plan=split_plan,
-                K=K,
-                seed_base=args.seed,
-                test_ratio=args.test_ratio,
-                thr_step=args.thr_step,
-                n_estimators=args.rf_estimators,
-                depths=depths,
-                min_leaves=leaves,
-                class_weight="balanced_subsample",
-            )
-
-            if rf_grid_rows:
-                rf_grid_best_row = rf_grid_rows[0]
-                print("[RF GRID]")
-                print(f"- tried: {len(rf_grid_rows)} configs")
-                print(f"- best_params: n_estimators={rf_grid_best_row['n_estimators']} "
-                      f"max_depth={rf_grid_best_row['max_depth']} "
-                      f"min_samples_leaf={rf_grid_best_row['min_samples_leaf']}")
-                print(f"- best_threshold: {rf_grid_best_row['thr']:.2f} "
-                      f"f1_1={rf_grid_best_row['f1_1']:.4f} "
-                      f"recall_1={rf_grid_best_row['recall_1']:.4f} "
-                      f"prec_1={rf_grid_best_row['precision_1']:.4f} "
-                      f"bal_acc={rf_grid_best_row['bal_acc']:.4f}")
-                print(f"- cm_sum {_fmt_cm(rf_grid_best_row['cm_sum'])}")
-
-                # 기존 기준(best/tuned) 대비 개선되면 best/tuned/feature ranking을 갱신
-                ref_f1 = -1.0
-                if tuned and isinstance(tuned, list) and tuned:
-                    ref_f1 = float(tuned[0][1].get("f1_1", -1.0))
-                elif best and best in packed:
-                    ref_f1 = float(packed[best]["f1_1"]["mean"])
-
-                if rf_grid_best_row["f1_1"] > ref_f1:
-                    best = "RF_balanced_subsample"
-                    tuned = rf_grid_best_tuned  # threshold ranking (Top5 출력/리포트용)
-
-                    # 전체 데이터로 RF(선택된 파라미터) 재학습 후 feature 랭킹 갱신
-                    X_all2 = [x for x, _ in data]
-                    y_all2 = [yy for _, yy in data]
-                    if rf_grid_params:
-                        kind, ranked = fit_full_rf_and_rank_features(
-                            X_all2,
-                            y_all2,
-                            FEATURE_NAMES,
-                            seed=args.seed,
-                            rf_params=rf_grid_params,
-                        )
-                        if ranked:
-                            print(f"[TOP FEATURES] (tree_importance) top 12 (RF tuned)")
-                            for name, score in ranked[:12]:
-                                print(f"- {name}: {score:.6f}")
-            else:
-                print("[WARN] RF grid search produced no results (sklearn missing?).")
-
-    # ---- 리포트 저장 ----
-    report_path = args.report.strip() or _default_report_path(split_mode, args.group_key)
-    write_report_md(
-        report_path,
-        input_path=args.input,
-        n_rows=len(rows),
-        n_usable=len(data),
-        label_dist=dict(Counter(ys)),
-        test_ratio=args.test_ratio,
-        seed=args.seed,
-        K=K,
-        results=packed,
+    lines.append("## Majority Baseline (always=majority)")
+    majority_all = compute_metrics(y, np.full_like(y, majority_class))
+    lines.append(f"- majority_class: {majority_class}")
+    lines.append(
+        f"- acc(all): {majority_all['acc']:.4f}  bal_acc(all): {majority_all['bal_acc']:.4f}  f1_1(all): {majority_all['f1_1']:.4f}"
     )
+    lines.append("")
 
-    # 리포트에 best/top-features append
-    try:
-        with open(report_path, "a", encoding="utf-8") as f:
-            f.write("\n## Split Mode\n\n")
-            f.write(f"- mode: {split_mode}\n")
-            if split_mode == "group":
-                f.write(f"- group_key: {args.group_key}\n")
-                f.write(f"- n_groups: {n_groups}\n")
-            f.write("\n")
+    lines.append(f"## Model: {args.model}")
+    if args.model == "logreg":
+        lines.append(f"- class_weight: {args.class_weight}")
+        lines.append(f"- C: {args.C}")
+        lines.append(f"- tune_threshold: {bool(args.tune_threshold)} (metric={args.threshold_metric})")
+        if thr_list:
+            thr_stats = summarize(thr_list)
+            lines.append(f"- threshold stats: mean={thr_stats['mean']:.3f} min={thr_stats['min']:.3f} max={thr_stats['max']:.3f}")
+    lines.append("")
 
-            f.write("\n## Best Model\n\n")
-            if best:
-                f.write(f"- metric: f1_1(mean)\n")
-                f.write(f"- best: {best}\n")
-                f.write(f"- f1_1_mean: {packed[best]['f1_1']['mean']:.4f}\n\n")
-            else:
-                f.write("- best: (none)\n\n")
+    lines.append("### Metrics / TEST")
+    for k in keys:
+        lines.append(fmt_stats(k, summary[k]))
+    lines.append("")
+    lines.append("### Confusion Matrix (sum over repeats)")
+    lines.append(f"- TN={cm_sum[0,0]} FP={cm_sum[0,1]} FN={cm_sum[1,0]} TP={cm_sum[1,1]}")
+    lines.append("")
+    lines.append("## Features")
+    lines.append(f"- num_features: {len(feat_cols)}")
+    lines.append(f"- feature_cols: {', '.join(feat_cols[:30])}" + (" ..." if len(feat_cols) > 30 else ""))
+    lines.append("")
 
-            f.write("## Top Features (fit on full data)\n\n")
-            if best and ranked:
-                f.write(f"- kind: {kind}\n\n")
-                f.write("| rank | feature | score |\n|---:|---|---:|\n")
-                for i, (fname, score) in enumerate(ranked[:12], start=1):
-                    f.write(f"| {i} | {fname} | {score:.6f} |\n")
-            else:
-                f.write("- (unavailable)\n")
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
 
-            f.write("\n## Threshold Tuning\n\n")
-            if tuned:
-                thr, m, cm = tuned[0]
-                f.write(f"- model: {best}\n")
-                f.write(f"- best_threshold: {thr:.2f}\n")
-                f.write(f"- f1_1: {m['f1_1']:.4f}\n")
-                f.write(f"- recall_1: {m['recall_1']:.4f}\n")
-                f.write(f"- precision_1: {m['precision_1']:.4f}\n")
-                f.write(f"- bal_acc: {m['bal_acc']:.4f}\n")
-                f.write(f"- cm_sum: {_fmt_cm(cm)}\n\n")
-
-                f.write("Top 5 thresholds by f1_1:\n\n")
-                f.write(f"Top 5 thresholds by {args.thr_metric}:\n\n")
-                f.write("| rank | thr | f1_1 | recall_1 | precision_1 | bal_acc |\n|---:|---:|---:|---:|---:|---:|\n")
-                for i, (t, mm, _) in enumerate(tuned[:5], start=1):
-                    f.write(f"| {i} | {t:.2f} | {mm['f1_1']:.4f} | {mm['recall_1']:.4f} | {mm['precision_1']:.4f} | {mm['bal_acc']:.4f} |\n")
-            else:
-                f.write("- (not run)\n")
-
-            f.write("\n## RF Grid Search\n\n")
-            if rf_grid_rows:
-                f.write(f"- tried_configs: {len(rf_grid_rows)}\n")
-                if rf_grid_params:
-                    f.write(
-                        f"- best_params: n_estimators={rf_grid_params.get('n_estimators')} "
-                        f"max_depth={rf_grid_params.get('max_depth')} "
-                        f"min_samples_leaf={rf_grid_params.get('min_samples_leaf')} "
-                        f"class_weight={rf_grid_params.get('class_weight')}\n"
-                    )
-                if rf_grid_best_row:
-                    f.write(
-                        f"- best_threshold: {rf_grid_best_row['thr']:.2f} "
-                        f"f1_1={rf_grid_best_row['f1_1']:.4f} "
-                        f"recall_1={rf_grid_best_row['recall_1']:.4f} "
-                        f"precision_1={rf_grid_best_row['precision_1']:.4f} "
-                        f"bal_acc={rf_grid_best_row['bal_acc']:.4f} "
-                        f"acc={rf_grid_best_row['acc']:.4f}\n"
-                    )
-                    f.write(f"- cm_sum: {_fmt_cm(rf_grid_best_row['cm_sum'])}\n\n")
-
-                f.write("| rank | max_depth | min_samples_leaf | thr | f1_1 | recall_1 | precision_1 | bal_acc | acc |\n")
-                f.write("|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
-                topn = max(1, int(args.rf_topn))
-                for i, row in enumerate(rf_grid_rows[:topn], start=1):
-                    md = "None" if row["max_depth"] is None else str(row["max_depth"])
-                    f.write(
-                        f"| {i} | {md} | {row['min_samples_leaf']} | {row['thr']:.2f} | "
-                        f"{row['f1_1']:.4f} | {row['recall_1']:.4f} | {row['precision_1']:.4f} | "
-                        f"{row['bal_acc']:.4f} | {row['acc']:.4f} |\n"
-                    )
-            else:
-                f.write("- (not run)\n")
-
-                
-        print("[OK] appended best/top-features to report.")
-    except Exception as e:
-        print(f"[WARN] failed to append report: {e}")
+    print("\n".join(lines))
+    print(f"\n[OK] report saved: {report_path}")
 
 
-    print(f"[OK] wrote report: {report_path}")
-
-    # ===== Final train & save (optional) =====
-    if args.save_model:
-        # 1) 모델 선택
-        chosen_name = best if args.final_model == "BEST" else args.final_model
-        if not chosen_name:
-            raise ValueError("final-model=BEST but no best model selected.")
-
-        # 2) threshold 선택 우선순위:
-        #    --final-threshold > (tuned가 있고, chosen_name==best면 tuned top1) > (RF grid best thr) > 0.5
-        chosen_thr = args.final_threshold
-        if chosen_thr is None:
-            if tuned and chosen_name == best:
-                chosen_thr = float(tuned[0][0])
-            elif chosen_name == "RF_balanced_subsample" and rf_grid_best_row and "thr" in rf_grid_best_row:
-                chosen_thr = float(rf_grid_best_row["thr"])
-            else:
-                chosen_thr = 0.5
-
-        # 3) 전체 데이터로 최종 재학습
-        X_all = [x for x, _ in data]
-        y_all = [y for _, y in data]
-
-        rf_params_for_save = rf_grid_params if chosen_name == "RF_balanced_subsample" else None
-        model = fit_final_estimator(
-            chosen_name,
-            X_all,
-            y_all,
-            seed=args.seed,
-            rf_params=rf_params_for_save,
-        )
-        if model is None:
-            raise ValueError(f"unsupported final model: {chosen_name}")
-
-        # 4) 모델+메타 저장(권장: model.joblib + meta.json)
-        meta_path = (
-            args.save_meta.strip()
-            if isinstance(args.save_meta, str) and args.save_meta.strip()
-            else os.path.splitext(args.save_model)[0] + ".meta.json"
-        )
-        save_bundle(
-            model,
-            model_path=args.save_model,
-            meta_path=meta_path,
-            model_name=chosen_name,
-            feature_names=FEATURE_NAMES,
-            perk_ids=PERK_IDS,
-            threshold=float(chosen_thr),
-            group_key=args.group_key,
-            rf_params=rf_params_for_save,
-            train_path=train_path,
-            test_path=(args.test.strip() if isinstance(args.test, str) else ""),
-        )
-        print(f"[OK] saved model: {args.save_model}")
-        print(f"[OK] saved meta : {meta_path}")
-        print(f"[INFO] saved model_name={chosen_name} thr={float(chosen_thr):.2f} rows={len(data)}")
-
-    # ===== Fixed Test Evaluation (optional) =====
-    if isinstance(args.test, str) and args.test.strip():
-        test_path = args.test.strip()
-        test_rows = load_csv(test_path)
-
-        test_data: List[Tuple[List[float], int]] = []
-        test_groups: List[str] = []
-        test_rows_kept: List[Dict[str, Any]] = []
-
-        for idx, row in enumerate(test_rows):
-            item = build_features(row)
-            if item is None:
-                continue
-
-            g = row.get(args.group_key)
-            if not isinstance(g, str) or not g.strip():
-                a = row.get("a_name")
-                d = row.get("d_name")
-                if isinstance(a, str) and isinstance(d, str) and a.strip() and d.strip():
-                    g = f"{a.strip()}__vs__{d.strip()}"
-                else:
-                    g = f"row_{idx}"
-
-            test_data.append(item)
-            test_groups.append(g)
-            test_rows_kept.append(row)
-
-        dropped = 0
-        if args.drop_overlap_groups and args.group:
-            train_group_set = set(groups)
-            keep_idx = [i for i, g in enumerate(test_groups) if g not in train_group_set]
-            dropped = len(test_groups) - len(keep_idx)
-            if dropped > 0:
-                test_data = [test_data[i] for i in keep_idx]
-                test_groups = [test_groups[i] for i in keep_idx]
-                test_rows_kept = [test_rows_kept[i] for i in keep_idx]
-
-        print(f"[INFO] fixed test: {test_path}")
-        print(f"[INFO] test rows: {len(test_rows)}")
-        print(f"[INFO] usable test rows: {len(test_data)}")
-        if dropped:
-            print(f"[INFO] dropped overlap groups: {dropped}")
-
-        if len(test_data) == 0:
-            print("[WARN] fixed test usable rows is 0 (after filtering). skip fixed test eval.")
-        elif not best:
-            print("[WARN] best model is empty. skip fixed test eval.")
-        else:
-            # threshold 우선순위: 튠 결과(tuned) -> rf_grid_best_row -> default(0.5)
-            thr = 0.5
-            if tuned and isinstance(tuned, list) and tuned:
-                try:
-                    thr = float(tuned[0][0])
-                except Exception:
-                    thr = 0.5
-            elif rf_grid_best_row and isinstance(rf_grid_best_row, dict) and "thr" in rf_grid_best_row:
-                try:
-                    thr = float(rf_grid_best_row["thr"])
-                except Exception:
-                    thr = 0.5
-
-            y_true = [y for _, y in test_data]
-            preds: Optional[List[int]] = None
-            probas: Optional[List[float]] = None
-
-            if best.startswith("MAJORITY"):
-                maj = 1 if ys.count(1) > ys.count(0) else 0
-                preds = [maj] * len(test_data)
-                thr = 0.5
-            else:
-                # proba 기반 threshold가 가능하면 사용 (RF는 rf_grid_params 반영!)
-                if best == "RF_balanced_subsample" and rf_grid_params:
-                    probas = fit_predict_proba_rf(
-                        data, test_data,
-                        seed=args.seed,
-                        n_estimators=int(rf_grid_params.get("n_estimators", 200)),
-                        max_depth=rf_grid_params.get("max_depth", None),
-                        min_samples_leaf=int(rf_grid_params.get("min_samples_leaf", 1)),
-                        class_weight=str(rf_grid_params.get("class_weight", "balanced_subsample")),
-                    )
-                else:
-                    probas = fit_predict_proba_model(data, test_data, best, seed=args.seed)
-
-                # ---- threshold 결정 우선순위 ----
-                thr = 0.5
-                if args.fixed_threshold is not None:
-                    thr = float(args.fixed_threshold)
-                elif args.fixed_threshold_sweep:
-                    if probas is None:
-                        print("[WARN] fixed-threshold-sweep requested but probas unavailable.")
-                    else:
-                        ranked_thr = threshold_sweep_from_probas(
-                            y_true, probas,
-                            thr_step=args.thr_step,
-                            metric=args.fixed_threshold_metric,
-                        )
-                        topn = max(1, int(args.fixed_threshold_topn))
-                        print(f"[FIXED_SWEEP] metric={args.fixed_threshold_metric} top{topn}")
-                        for i, (t, mm, cm) in enumerate(ranked_thr[:topn], start=1):
-                            print(f"- #{i} thr={t:.2f} f1_1={mm['f1_1']:.4f} recall_1={mm['recall_1']:.4f} prec_1={mm['precision_1']:.4f} bal_acc={mm['bal_acc']:.4f} cm={_fmt_cm(cm)}")
-                        if ranked_thr:
-                            thr = float(ranked_thr[0][0])
-                else:
-                    if tuned and isinstance(tuned, list) and tuned:
-                        try:
-                            thr = float(tuned[0][0])
-                        except Exception:
-                            thr = 0.5
-                    elif rf_grid_best_row and isinstance(rf_grid_best_row, dict) and "thr" in rf_grid_best_row:
-                        try:
-                            thr = float(rf_grid_best_row["thr"])
-                        except Exception:
-                            thr = 0.5
-
-                # ---- 지정 threshold 목록 진단 출력 ----
-                if isinstance(args.fixed_thresholds, str) and args.fixed_thresholds.strip() and probas is not None:
-                    try:
-                        thrs = sorted(set(_parse_float_list_csv(args.fixed_thresholds)))
-                    except Exception:
-                        thrs = []
-                    for t2 in thrs:
-                        y_pred2 = [1 if p >= t2 else 0 for p in probas]
-                        cm2 = _cm_from_preds(y_true, y_pred2)
-                        m2 = _metrics_from_cm(cm2)
-                        print(f"[FIXED_THR] thr={t2:.2f} f1_1={m2['f1_1']:.4f} recall_1={m2['recall_1']:.4f} prec_1={m2['precision_1']:.4f} bal_acc={m2['bal_acc']:.4f} cm={_fmt_cm(cm2)}")
-
-                if probas is not None:
-                    preds = [1 if p >= thr else 0 for p in probas]
-                else:
-                    # fallback (함수들은 기존 파일에 이미 있어야 함)
-                    if best == "LR":
-                        preds = fit_predict_lr(data, test_data, class_weight=None, seed=args.seed)
-                    elif best == "LR_balanced":
-                        preds = fit_predict_lr(data, test_data, class_weight="balanced", seed=args.seed)
-                    elif best == "DT_balanced":
-                        preds = fit_predict_tree(data, test_data, model="dt", class_weight="balanced", seed=args.seed)
-                    elif best == "RF_balanced_subsample":
-                        preds = fit_predict_tree(data, test_data, model="rf", class_weight="balanced_subsample", seed=args.seed)
-
-            if preds is None:
-                print("[WARN] fixed test eval skipped (sklearn missing?).")
-            else:
-                details: List[Dict[str, Any]] = []
-                for i, row in enumerate(test_rows_kept):
-                    pk = row.get(args.group_key, "") # group_key에 맞춰서 기록
-                    details.append({
-                        "scenario_title": row.get("scenario_title", ""),
-                        "pair_key": row.get("pair_key", ""),
-                        "pair_key": pk,
-                        "encounter_type": row.get("encounter_type", ""),
-                        "defender_count": row.get("defender_count", ""),
-                        "start_distance": row.get("start_distance", ""),
-                        "y_true": y_true[i],
-                        "y_pred": preds[i],
-                        "proba_1": (round(probas[i], 4) if probas is not None else None),
-                        "ok": (y_true[i] == preds[i]),
-                    })
-                
-                cm = _cm_from_preds(y_true, preds)
-                m = _metrics_from_cm(cm)
-
-                print("[FIXED_TEST]")
-                print(f"- model   : {best}")
-                print(f"- thr     : {thr:.2f}")
-                print(f"- acc     : {m['acc']:.4f}")
-                print(f"- bal_acc : {m['bal_acc']:.4f}")
-                print(f"- f1_1    : {m['f1_1']:.4f}")
-                print(f"- recall_1: {m['recall_1']:.4f}")
-                print(f"- prec_1  : {m['precision_1']:.4f}")
-                print(f"- cm      : {_fmt_cm(cm)}")
-
-                report_test_path = (
-                    args.report_test.strip()
-                    if isinstance(args.report_test, str) and args.report_test.strip()
-                    else report_path.replace(".md", "_fixedtest.md")
-                )
-
-                write_fixed_test_report_md(
-                    report_test_path,
-                    train_path=train_path,
-                    test_path=test_path,
-                    n_train_rows=len(rows),
-                    n_train_usable=len(data),
-                    n_test_rows=len(test_rows),
-                    n_test_usable=len(test_data),
-                    group_key=args.group_key,
-                    dropped_overlap=dropped,
-                    best_model=best,
-                    threshold=thr,
-                    results={"metrics": m, "cm": cm},
-                    details=details,
-                )
-                print(f"[OK] wrote fixed-test report: {report_test_path}")
-
-    
 if __name__ == "__main__":
     main()
