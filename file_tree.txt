@@ -41,6 +41,14 @@ notebooks/defense-balancing-tool/logs/scenarios.jsonl.bak-20251218-211805
 notebooks/defense-balancing-tool/main.py
 notebooks/defense-balancing-tool/make_group_holdout.py
 notebooks/defense-balancing-tool/migrate_logs.py
+notebooks/defense-balancing-tool/models/baseline.joblib
+notebooks/defense-balancing-tool/models/baseline_balacc.joblib
+notebooks/defense-balancing-tool/models/baseline_recall.joblib
+notebooks/defense-balancing-tool/models/baseline_recall_k30.joblib
+notebooks/defense-balancing-tool/models/meta.json
+notebooks/defense-balancing-tool/models/meta_balacc.json
+notebooks/defense-balancing-tool/models/meta_recall.json
+notebooks/defense-balancing-tool/models/meta_recall_k30.json
 notebooks/defense-balancing-tool/perks.json
 notebooks/defense-balancing-tool/reports/baseline_eval_20251220.md
 notebooks/defense-balancing-tool/reports/baseline_eval_20251221.md
@@ -62,6 +70,10 @@ notebooks/defense-balancing-tool/reports/baseline_eval_20251228_group_pair_key_f
 notebooks/defense-balancing-tool/reports/baseline_eval_20251228_group_pair_key_full_fixedtest.md
 notebooks/defense-balancing-tool/reports/baseline_eval_20251229_group_pair_key_strat_fixedtest.md
 notebooks/defense-balancing-tool/reports/baseline_eval_20251229_group_pair_key_strat_fixedtest_thr.md
+notebooks/defense-balancing-tool/reports/baseline_eval_20251230_balacc.md
+notebooks/defense-balancing-tool/reports/baseline_eval_20251230_recall.md
+notebooks/defense-balancing-tool/reports/baseline_eval_20251230_recall_k30.md
+notebooks/defense-balancing-tool/reports/baseline_eval_20251230_traintest_group_pair_key_full_strat_rfgrid_thr.md
 notebooks/defense-balancing-tool/reports/baseline_experiments_20251224.md
 notebooks/defense-balancing-tool/reports/baseline_fixedtest_20251224.md
 notebooks/defense-balancing-tool/reports/baseline_fixedtest_perk_20251224.md
