@@ -1,0 +1,20 @@
+[
+  { 
+    "name": "full",    
+    "label": "Full (60)",    
+    "model": "models/rf_full_current.joblib",    
+    "meta": "models/rf_full_current.json" 
+  },
+  { 
+    "name": "no_perk", 
+    "label": "No Perk (27)", 
+    "model": "models/rf_no_perk_current.joblib", 
+    "meta": "models/rf_no_perk_current.json" 
+  },
+  { 
+    "name": "no_adv",  
+    "label": "No Adv (42)",  
+    "model": "models/rf_no_adv_current.joblib",  
+    "meta": "models/rf_no_adv_current.json" 
+  }
+]
