@@ -112,8 +112,9 @@ if (-not (Test-Path $currentCfg)) {
 # 1) 파이프라인(로그/데이터셋/기본 리포트) 실행
 # -------------------------
 if (Test-Path ".\run_pipeline.ps1") {
-  Write-Host "`n[STEP] run_pipeline.ps1"
   .\run_pipeline.ps1
+} elseif (Test-Path ".\scripts\run_pipeline.ps1") {
+  .\scripts\run_pipeline.ps1
 } else {
   Write-Host "[WARN] run_pipeline.ps1 not found. skip."
 }
