@@ -10,7 +10,7 @@
 ```powershell
 cd notebooks/defense-balancing-tool
 python -m pip install -r requirements.txt
-.\run_pipeline.ps1
+.\scripts\run_pipeline.ps1
 ```
 
 옵션 예시:
