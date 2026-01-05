@@ -57,7 +57,11 @@ if (-not $AppendExperiments) {
   }
 }
 
+Write-Host "[DEBUG] Seeds=$Seeds BaseSeed=$BaseSeed Trials=$Trials DuelPairs=$DuelPairs SwarmPairs=$SwarmPairs AppendExperiments=$AppendExperiments"
+if ($Seeds -le 0) { throw "[FATAL] Seeds must be >= 1 (current: $Seeds). STEP3 will be skipped." }
+
 Write-Host "[STEP 3] append experiments (duel + swarm)"
+
 for ($i = 0; $i -lt $Seeds; $i++) {
   $seed = $BaseSeed + $i
   $perkSeed = 10000 + $seed
@@ -70,6 +74,11 @@ for ($i = 0; $i -lt $Seeds; $i++) {
 
   # swarm (2D)
   Run "python batch_experiments.py --encounter swarm --mode 2 --pairs $SwarmPairs --trials $Trials --seed $seed --out `"$ExperimentsLog`" $posFlags --defender-counts `"$DefenderCounts`" --auto-perks --perk-seed $($perkSeed+1) --perk-overwrite --level-min $LevelMin --level-max $LevelMax"
+}
+
+$expLines = (Get-Content "logs/experiments.jsonl" -ErrorAction SilentlyContinue | Measure-Object -Line).Lines
+if ($expLines -lt 1) {
+    throw "[FATAL] experiments.jsonl is empty. STEP3 did not generate/append experiments."
 }
 
 Write-Host "[STEP 4] migrate/validate logs (strict v1)"

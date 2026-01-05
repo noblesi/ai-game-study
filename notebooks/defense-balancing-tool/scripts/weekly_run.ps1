@@ -1,4 +1,7 @@
 param(
+  # -------------------------
+  # weekly_run 태그/학습 관련
+  # -------------------------
   [string]$Tag = (Get-Date -Format "yyyyMMdd"),
 
   [string]$Train = "datasets\train_experiments_v1.csv",
@@ -16,13 +19,34 @@ param(
   [double]$F1DropTol     = 0.02,   # current 대비 f1_1이 -0.02p 이내면 허용
 
   [switch]$ForcePromote,           # 조건 무시하고 무조건 승격
-  [switch]$SkipPromote,             # 학습만 하고 승격은 안 함
+  [switch]$SkipPromote,            # 학습만 하고 승격은 안 함
 
   # 주간 총집합 옵션
   [string]$WeeklyReportsDir = "reports",
   [int]$WeeklyDays = 7,
-  [string]$WeeklyOutdir = ""
+  [string]$WeeklyOutdir = "",
 
+  # -------------------------
+  # run_pipeline 전달용(중요!)
+  # -------------------------
+  [int]$Seeds = 10,           # 몇 번 반복할지(=실험 데이터 누적량)
+  [int]$BaseSeed = 200,       # 시작 seed
+  [int]$Trials = 80,          # 조합당 전투 횟수
+  [int]$DuelPairs = 80,       # duel에서 생성할 pair 개수
+  [int]$SwarmPairs = 160,     # swarm에서 생성할 pair 개수
+  [int]$LevelMin = 1,
+  [int]$LevelMax = 10,
+  [switch]$RandomPos = $true,
+  [double]$PosRange = 8.0,
+  [string]$DefenderCounts = "3,5,8",
+  [string]$ExperimentsLog = "logs/experiments.jsonl",
+  [string]$ScenariosLog = "logs/scenarios.jsonl",
+  [switch]$AppendExperiments = $false,
+
+  # (파이프라인) baseline 산출물 저장 옵션
+  [switch]$PipelineSaveModel = $true,
+  [string]$PipelineModelPath = "models/baseline.joblib",
+  [string]$PipelineModelMeta = "models/meta.json"
 )
 
 # scripts 폴더에서 실행되더라도 프로젝트 루트로 고정
@@ -46,7 +70,7 @@ function Get-FinalMetricFromReport([string]$path, [string]$key) {
 
   $block = $m.Value
 
-$km = [regex]::Match($block, "\n\s*-\s*${key}:\s*([0-9]*\.?[0-9]+)")
+  $km = [regex]::Match($block, "\n\s*-\s*${key}:\s*([0-9]*\.?[0-9]+)")
   if ($km.Success) { return [double]$km.Groups[1].Value }
 
   return $null
@@ -84,6 +108,50 @@ function Invoke-TrainOne(
   python @pyArgs
 }
 
+function Invoke-RunPipeline {
+  Write-Host "`n[STEP] run_pipeline (Seeds=$Seeds, Trials=$Trials, DuelPairs=$DuelPairs, SwarmPairs=$SwarmPairs)"
+
+  # run_pipeline 위치 결정: scripts 쪽을 우선(중복 파일 있으면 혼선 방지)
+  $pipePath = $null
+  if (Test-Path ".\scripts\run_pipeline.ps1") {
+    $pipePath = ".\scripts\run_pipeline.ps1"
+  } elseif (Test-Path ".\run_pipeline.ps1") {
+    $pipePath = ".\run_pipeline.ps1"
+  } else {
+    throw "[weekly_run] run_pipeline.ps1 not found."
+  }
+
+  # ✅ 백틱으로 여러 줄 인자 나열하지 말고, splatting으로 안전하게 전달
+  $pipeArgs = @{
+    Seeds            = [int]$Seeds
+    BaseSeed         = [int]$BaseSeed
+    Trials           = [int]$Trials
+    DuelPairs        = [int]$DuelPairs
+    SwarmPairs       = [int]$SwarmPairs
+    LevelMin         = [int]$LevelMin
+    LevelMax         = [int]$LevelMax
+
+    # switch는 bool로 넘겨도 PowerShell이 -Switch:$false 형태로 처리해줌
+    RandomPos        = [bool]$RandomPos
+    PosRange         = [double]$PosRange
+
+    DefenderCounts   = $DefenderCounts
+    ExperimentsLog   = $ExperimentsLog
+    ScenariosLog     = $ScenariosLog
+    AppendExperiments= [bool]$AppendExperiments
+
+    SaveModel        = [bool]$PipelineSaveModel
+    ModelPath        = $PipelineModelPath
+    ModelMeta        = $PipelineModelMeta
+  }
+
+  Write-Host ("[WEEKLY DEBUG] calling {0} with Seeds={1}" -f $pipePath, $pipeArgs.Seeds)
+
+  # call operator로 스크립트 실행 (dot-sourcing 금지)
+  & $pipePath @pipeArgs
+}
+
+
 # -------------------------
 # 0) 기본 폴더 준비
 # -------------------------
@@ -109,15 +177,9 @@ if (-not (Test-Path $currentCfg)) {
 }
 
 # -------------------------
-# 1) 파이프라인(로그/데이터셋/기본 리포트) 실행
+# 1) 파이프라인(로그/데이터셋/기본 리포트) 실행  ✅(패치)
 # -------------------------
-if (Test-Path ".\run_pipeline.ps1") {
-  .\run_pipeline.ps1
-} elseif (Test-Path ".\scripts\run_pipeline.ps1") {
-  .\scripts\run_pipeline.ps1
-} else {
-  Write-Host "[WARN] run_pipeline.ps1 not found. skip."
-}
+Invoke-RunPipeline
 
 # -------------------------
 # 2) 모델 후보 3종 학습 (tag 고정 파일로 저장)
@@ -218,9 +280,10 @@ if (Test-Path ".\make_portfolio_pack.py") {
   Write-Host "[WARN] make_portfolio_pack.py not found. skip."
 }
 
-# 실행 커맨드 기록
+# 실행 커맨드 기록(참고용)
 @"
-.\run_pipeline.ps1
+# run_pipeline (weekly_run에서 전달)
+.\run_pipeline.ps1 -Seeds $Seeds -Trials $Trials -DuelPairs $DuelPairs -SwarmPairs $SwarmPairs -BaseSeed $BaseSeed -LevelMin $LevelMin -LevelMax $LevelMax -RandomPos:$RandomPos -PosRange $PosRange -DefenderCounts "$DefenderCounts" -AppendExperiments:$AppendExperiments
 
 python train_baseline.py `
   --train $Train `

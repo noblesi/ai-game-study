@@ -68,6 +68,7 @@ def select_feature_cols(df: pd.DataFrame, label_col: str, group_col: Optional[st
     }
 
     feats: List[str] = []
+    candidates: List[str] = []
     for c in df.columns:
         if c in drop:
             continue
@@ -104,12 +105,41 @@ def select_feature_cols(df: pd.DataFrame, label_col: str, group_col: Optional[st
         if lc in ("avg_time", "trials"):
             continue
 
-        if pd.api.types.is_numeric_dtype(df[c]):
+        # 여기까지 통과한 컬럼은 "feature 후보"
+        candidates.append(c)
+
+        s = df[c]
+        if pd.api.types.is_numeric_dtype(s):
+            feats.append(c)
+            continue
+
+        # ✅ object dtype라도 "숫자 문자열"이면 강제 변환해서 사용
+        # 예: "120", "1.5", ""(빈값), "NaN" 등이 섞이면 pandas가 object로 잡는 경우가 있음
+        try:
+            s2 = pd.to_numeric(s, errors="coerce")
+        except Exception:
+            s2 = None
+
+        if s2 is not None and s2.notna().any():
+            df[c] = s2
             feats.append(c)
 
     if not feats:
-        raise ValueError("[train_baseline] numeric feature columns not found after filtering")
-
+        # 디버그 정보: 후보 컬럼과 dtype 일부를 같이 보여주기
+        dbg = []
+        for cc in candidates[:60]:
+            dt = str(df[cc].dtype)
+            # 값 샘플(비어있지 않은 것 1개)
+            ss = df[cc].dropna()
+            sample = None
+            if len(ss) > 0:
+                sample = str(ss.iloc[0])
+            dbg.append((cc, dt, sample))
+        raise ValueError(
+            "[train_baseline] numeric feature columns not found after filtering. "
+            f"candidate_cols={len(candidates)}, sample={dbg[:20]}"
+        )
+    
     return feats
 
 def rate(y: np.ndarray) -> float:
