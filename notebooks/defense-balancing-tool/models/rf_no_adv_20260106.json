@@ -1,7 +1,7 @@
 {
   "date": "20260106",
-  "train": "datasets/train_experiments_v1.csv",
-  "test": "datasets/test_scenarios_v1.csv",
+  "train": "datasets\\train_experiments_v1.csv",
+  "test": "datasets\\test_scenarios_v1.csv",
   "label_col": "label_attacker_better",
   "group_key": "pair_key_full",
   "features": [
@@ -27,7 +27,6 @@
     "d_atk_per_level",
     "a_perk_count",
     "d_perk_count",
-    "perk_count_adv",
     "a_has_perk_armor",
     "a_has_perk_cleave",
     "a_has_perk_duelist",
@@ -47,24 +46,7 @@
     "d_has_perk_lifesteal",
     "d_has_perk_longshot",
     "d_has_perk_rapid",
-    "d_has_perk_shield",
-    "perk_adv_armor",
-    "perk_adv_cleave",
-    "perk_adv_duelist",
-    "perk_adv_execute",
-    "perk_adv_fury",
-    "perk_adv_haste",
-    "perk_adv_lifesteal",
-    "perk_adv_longshot",
-    "perk_adv_rapid",
-    "perk_adv_shield",
-    "a_dps",
-    "d_dps",
-    "a_ttk_est",
-    "d_ttk_est",
-    "dps_adv",
-    "range_adv",
-    "ttk_adv"
+    "d_has_perk_shield"
   ],
   "model_kind": "rf",
   "model_params": {
@@ -74,15 +56,15 @@
     "min_samples_split": 2,
     "n_estimators": 400
   },
-  "thr": 0.16499999999999998,
+  "thr": 0.20499999999999996,
   "test_metrics": {
-    "acc": 0.5897435897435898,
-    "bal_acc": 0.5555555555555556,
-    "prec_1": 1.0,
-    "recall_1": 0.1111111111111111,
-    "f1_1": 0.2,
-    "ap": 0.7416766081740613,
-    "roc_auc": 0.8095238095238094,
-    "thr": 0.16499999999999998
+    "acc": 0.5384615384615384,
+    "bal_acc": 0.5,
+    "prec_1": 0.0,
+    "recall_1": 0.0,
+    "f1_1": 0.0,
+    "ap": 0.4639914986973811,
+    "roc_auc": 0.4880952380952381,
+    "thr": 0.20499999999999996
   }
 }
