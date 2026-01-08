@@ -1,6 +1,6 @@
 # Scenario Summary Report
 
-- Generated at: 2026-01-07 12:09:45
+- Generated at: 2026-01-08 12:37:13
 - Input records: 39 (scenario_preset: 39)
 - Schema versions: v1:39
 - Flags: win>=0.65, no_result>=0.05, avg_time>=10.0
@@ -120,7 +120,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:16 | v1 | run_duel_trials_2d | 8b5c3896 | Mage | Runner | 300 | 100.0% | 4.44 |
+| 2026-01-08T12:36:14 | v1 | run_duel_trials_2d | ff2f7420 | Mage | Runner | 300 | 100.0% | 4.44 |
 
 **Unit snapshot (most recent)**
 
@@ -139,7 +139,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:16 | v1 | run_duel_trials_2d | 8b5c3896 | Archer | Dark Shaman | 300 | 100.0% | 4.17 |
+| 2026-01-08T12:36:14 | v1 | run_duel_trials_2d | ff2f7420 | Archer | Dark Shaman | 300 | 100.0% | 4.17 |
 
 **Unit snapshot (most recent)**
 
@@ -158,7 +158,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:16 | v1 | run_duel_trials_2d | 8b5c3896 | Mage | Dark Shaman | 300 | 100.0% | 6.67 |
+| 2026-01-08T12:36:14 | v1 | run_duel_trials_2d | ff2f7420 | Mage | Dark Shaman | 300 | 100.0% | 6.67 |
 
 **Unit snapshot (most recent)**
 
@@ -177,7 +177,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:16 | v1 | run_duel_trials_2d | 8b5c3896 | Knight | Dark Shaman | 300 | 100.0% | 7.00 |
+| 2026-01-08T12:36:14 | v1 | run_duel_trials_2d | ff2f7420 | Knight | Dark Shaman | 300 | 100.0% | 7.00 |
 
 **Unit snapshot (most recent)**
 
@@ -196,7 +196,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:16 | v1 | run_duel_trials_2d | 8b5c3896 | AntiAir Tower | Goblin | 300 | 0.0% | 11.54 |
+| 2026-01-08T12:36:14 | v1 | run_duel_trials_2d | ff2f7420 | AntiAir Tower | Goblin | 300 | 0.0% | 11.54 |
 
 **Unit snapshot (most recent)**
 
@@ -215,7 +215,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:16 | v1 | run_duel_trials_2d | 8b5c3896 | Mage | Wyvern | 300 | 0.0% | 7.00 |
+| 2026-01-08T12:36:14 | v1 | run_duel_trials_2d | ff2f7420 | Mage | Wyvern | 300 | 0.0% | 7.00 |
 
 **Unit snapshot (most recent)**
 
@@ -234,7 +234,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:16 | v1 | run_duel_trials_2d | 8b5c3896 | AntiAir Tower | Dark Shaman | 300 | 0.0% | 8.89 |
+| 2026-01-08T12:36:14 | v1 | run_duel_trials_2d | ff2f7420 | AntiAir Tower | Dark Shaman | 300 | 0.0% | 8.89 |
 
 **Unit snapshot (most recent)**
 
@@ -253,7 +253,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:16 | v1 | run_duel_trials_2d | 8b5c3896 | Archer | Wyvern | 300 | 100.0% | 5.83 |
+| 2026-01-08T12:36:14 | v1 | run_duel_trials_2d | ff2f7420 | Archer | Wyvern | 300 | 100.0% | 5.83 |
 
 **Unit snapshot (most recent)**
 
@@ -272,7 +272,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:16 | v1 | run_duel_trials_2d | 8b5c3896 | Archer | Runner | 300 | 100.0% | 2.50 |
+| 2026-01-08T12:36:14 | v1 | run_duel_trials_2d | ff2f7420 | Archer | Runner | 300 | 100.0% | 2.50 |
 
 **Unit snapshot (most recent)**
 
@@ -291,7 +291,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:16 | v1 | run_duel_trials_2d | 8b5c3896 | Archer | Runner | 300 | 100.0% | 2.50 |
+| 2026-01-08T12:36:14 | v1 | run_duel_trials_2d | ff2f7420 | Archer | Runner | 300 | 100.0% | 2.50 |
 
 **Unit snapshot (most recent)**
 
@@ -310,7 +310,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:16 | v1 | run_duel_trials_2d | 8b5c3896 | Knight | Goblin | 200 | 100.0% | 6.00 |
+| 2026-01-08T12:36:14 | v1 | run_duel_trials_2d | ff2f7420 | Knight | Goblin | 200 | 100.0% | 6.00 |
 
 **Unit snapshot (most recent)**
 
@@ -329,7 +329,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:17 | v1 | run_duel_trials_2d | 8b5c3896 | Tank | Ogre Boss | 300 | 0.0% | 16.67 |
+| 2026-01-08T12:36:14 | v1 | run_duel_trials_2d | ff2f7420 | Tank | Ogre Boss | 300 | 0.0% | 16.67 |
 
 **Unit snapshot (most recent)**
 
@@ -348,7 +348,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:17 | v1 | run_duel_trials_2d | 8b5c3896 | Mage | Armored Orc | 300 | 100.0% | 12.22 |
+| 2026-01-08T12:36:14 | v1 | run_duel_trials_2d | ff2f7420 | Mage | Armored Orc | 300 | 100.0% | 12.22 |
 
 **Unit snapshot (most recent)**
 
@@ -367,7 +367,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:17 | v1 | run_duel_trials_2d | 8b5c3896 | AntiAir Tower | Wyvern | 300 | 100.0% | 7.00 |
+| 2026-01-08T12:36:14 | v1 | run_duel_trials_2d | ff2f7420 | AntiAir Tower | Wyvern | 300 | 100.0% | 7.00 |
 
 **Unit snapshot (most recent)**
 
@@ -386,7 +386,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:17 | v1 | run_duel_trials_2d | 8b5c3896 | Archer | Ogre Boss | 300 | 0.0% | 16.67 |
+| 2026-01-08T12:36:14 | v1 | run_duel_trials_2d | ff2f7420 | Archer | Ogre Boss | 300 | 0.0% | 16.67 |
 
 **Unit snapshot (most recent)**
 
@@ -405,7 +405,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:17 | v1 | run_duel_trials_2d | 8b5c3896 | Mage | Ogre Boss | 300 | 0.0% | 15.00 |
+| 2026-01-08T12:36:14 | v1 | run_duel_trials_2d | ff2f7420 | Mage | Ogre Boss | 300 | 0.0% | 15.00 |
 
 **Unit snapshot (most recent)**
 
@@ -424,7 +424,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:17 | v1 | run_duel_trials_2d | 8b5c3896 | Tank | Dark Shaman | 300 | 100.0% | 15.71 |
+| 2026-01-08T12:36:14 | v1 | run_duel_trials_2d | ff2f7420 | Tank | Dark Shaman | 300 | 100.0% | 15.71 |
 
 **Unit snapshot (most recent)**
 
@@ -443,7 +443,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:16 | v1 | run_duel_trials_2d | 8b5c3896 | Archer | Runner | 200 | 100.0% | 1.67 |
+| 2026-01-08T12:36:14 | v1 | run_duel_trials_2d | ff2f7420 | Archer | Runner | 200 | 100.0% | 1.67 |
 
 **Unit snapshot (most recent)**
 
@@ -462,7 +462,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:16 | v1 | run_duel_trials_2d | 8b5c3896 | AntiAir Tower | Wyvern | 200 | 100.0% | 6.00 |
+| 2026-01-08T12:36:14 | v1 | run_duel_trials_2d | ff2f7420 | AntiAir Tower | Wyvern | 200 | 100.0% | 6.00 |
 
 **Unit snapshot (most recent)**
 
@@ -481,7 +481,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:16 | v1 | run_duel_trials_2d | 8b5c3896 | Mage | Armored Orc | 200 | 100.0% | 11.11 |
+| 2026-01-08T12:36:14 | v1 | run_duel_trials_2d | ff2f7420 | Mage | Armored Orc | 200 | 100.0% | 11.11 |
 
 **Unit snapshot (most recent)**
 
@@ -500,7 +500,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:16 | v1 | run_duel_trials_2d | 8b5c3896 | Tank | Ogre Boss | 200 | 0.0% | 20.00 |
+| 2026-01-08T12:36:14 | v1 | run_duel_trials_2d | ff2f7420 | Tank | Ogre Boss | 200 | 0.0% | 20.00 |
 
 **Unit snapshot (most recent)**
 
@@ -519,7 +519,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:16 | v1 | run_duel_trials_2d | 8b5c3896 | Archer | Runner | 300 | 100.0% | 1.67 |
+| 2026-01-08T12:36:14 | v1 | run_duel_trials_2d | ff2f7420 | Archer | Runner | 300 | 100.0% | 1.67 |
 
 **Unit snapshot (most recent)**
 
@@ -538,7 +538,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:16 | v1 | run_duel_trials_2d | 8b5c3896 | Archer | Runner | 300 | 100.0% | 3.33 |
+| 2026-01-08T12:36:14 | v1 | run_duel_trials_2d | ff2f7420 | Archer | Runner | 300 | 100.0% | 3.33 |
 
 **Unit snapshot (most recent)**
 
@@ -557,7 +557,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:16 | v1 | run_duel_trials_2d | 8b5c3896 | Archer | Goblin | 300 | 100.0% | 3.33 |
+| 2026-01-08T12:36:14 | v1 | run_duel_trials_2d | ff2f7420 | Archer | Goblin | 300 | 100.0% | 3.33 |
 
 **Unit snapshot (most recent)**
 
@@ -576,7 +576,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:16 | v1 | run_duel_trials_2d | 8b5c3896 | Mage | Runner | 300 | 100.0% | 3.33 |
+| 2026-01-08T12:36:14 | v1 | run_duel_trials_2d | ff2f7420 | Mage | Runner | 300 | 100.0% | 3.33 |
 
 **Unit snapshot (most recent)**
 
@@ -595,7 +595,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:17 | v1 | run_swarm_trials_2d | 8b5c3896 | AntiAir Tower | Goblin x4 | 300 | 0.0% | 5.38 |
+| 2026-01-08T12:36:15 | v1 | run_swarm_trials_2d | ff2f7420 | AntiAir Tower | Goblin x4 | 300 | 0.0% | 5.38 |
 
 **Unit snapshot (most recent)**
 
@@ -614,7 +614,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:17 | v1 | run_swarm_trials_2d | 8b5c3896 | Archer | Wyvern x4 | 300 | 0.0% | 6.00 |
+| 2026-01-08T12:36:15 | v1 | run_swarm_trials_2d | ff2f7420 | Archer | Wyvern x4 | 300 | 0.0% | 6.00 |
 
 **Unit snapshot (most recent)**
 
@@ -633,7 +633,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:17 | v1 | run_swarm_trials_2d | 8b5c3896 | Mage | Wyvern x2 | 300 | 0.0% | 6.00 |
+| 2026-01-08T12:36:15 | v1 | run_swarm_trials_2d | ff2f7420 | Mage | Wyvern x2 | 300 | 0.0% | 6.00 |
 
 **Unit snapshot (most recent)**
 
@@ -652,7 +652,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:17 | v1 | run_swarm_trials_2d | 8b5c3896 | Tank | Dark Shaman x2 | 300 | 0.0% | 11.11 |
+| 2026-01-08T12:36:15 | v1 | run_swarm_trials_2d | ff2f7420 | Tank | Dark Shaman x2 | 300 | 0.0% | 11.11 |
 
 **Unit snapshot (most recent)**
 
@@ -671,7 +671,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:17 | v1 | run_swarm_trials_2d | 8b5c3896 | Archer | Runner x5 | 300 | 0.0% | 4.67 |
+| 2026-01-08T12:36:15 | v1 | run_swarm_trials_2d | ff2f7420 | Archer | Runner x5 | 300 | 0.0% | 4.67 |
 
 **Unit snapshot (most recent)**
 
@@ -690,7 +690,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:17 | v1 | run_swarm_trials_2d | 8b5c3896 | Knight | Goblin x4 | 200 | 0.0% | 4.62 |
+| 2026-01-08T12:36:14 | v1 | run_swarm_trials_2d | ff2f7420 | Knight | Goblin x4 | 200 | 0.0% | 4.62 |
 
 **Unit snapshot (most recent)**
 
@@ -709,7 +709,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:17 | v1 | run_swarm_trials_2d | 8b5c3896 | AntiAir Tower | Wyvern x3 | 200 | 0.0% | 6.00 |
+| 2026-01-08T12:36:14 | v1 | run_swarm_trials_2d | ff2f7420 | AntiAir Tower | Wyvern x3 | 200 | 0.0% | 6.00 |
 
 **Unit snapshot (most recent)**
 
@@ -728,7 +728,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:17 | v1 | run_swarm_trials_2d | 8b5c3896 | Mage | Runner x5 | 200 | 0.0% | 4.00 |
+| 2026-01-08T12:36:14 | v1 | run_swarm_trials_2d | ff2f7420 | Mage | Runner x5 | 200 | 0.0% | 4.00 |
 
 **Unit snapshot (most recent)**
 
@@ -747,7 +747,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:17 | v1 | run_swarm_trials_2d | 8b5c3896 | Archer | Goblin x6 | 200 | 0.0% | 4.62 |
+| 2026-01-08T12:36:15 | v1 | run_swarm_trials_2d | ff2f7420 | Archer | Goblin x6 | 200 | 0.0% | 4.62 |
 
 **Unit snapshot (most recent)**
 
@@ -766,7 +766,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:17 | v1 | run_swarm_trials_2d | 8b5c3896 | Tank | Goblin x8 | 200 | 0.0% | 5.38 |
+| 2026-01-08T12:36:15 | v1 | run_swarm_trials_2d | ff2f7420 | Tank | Goblin x8 | 200 | 0.0% | 5.38 |
 
 **Unit snapshot (most recent)**
 
@@ -785,7 +785,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:17 | v1 | run_swarm_trials_2d | 8b5c3896 | Archer | Goblin x3 | 300 | 0.0% | 6.15 |
+| 2026-01-08T12:36:15 | v1 | run_swarm_trials_2d | ff2f7420 | Archer | Goblin x3 | 300 | 0.0% | 6.15 |
 
 **Unit snapshot (most recent)**
 
@@ -804,7 +804,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:17 | v1 | run_swarm_trials_2d | 8b5c3896 | Mage | Goblin x5 | 300 | 0.0% | 4.62 |
+| 2026-01-08T12:36:15 | v1 | run_swarm_trials_2d | ff2f7420 | Mage | Goblin x5 | 300 | 0.0% | 4.62 |
 
 **Unit snapshot (most recent)**
 
@@ -823,7 +823,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:17 | v1 | run_swarm_trials_2d | 8b5c3896 | Knight | Runner x4 | 300 | 0.0% | 5.33 |
+| 2026-01-08T12:36:15 | v1 | run_swarm_trials_2d | ff2f7420 | Knight | Runner x4 | 300 | 0.0% | 5.33 |
 
 **Unit snapshot (most recent)**
 
@@ -842,7 +842,7 @@
 
 | logged_at | schema | engine | run_id | attacker | defender | trials | attacker_win_rate | avg_time |
 |---|---|---|---|---|---|---:|---:|---:|
-| 2026-01-07T12:08:17 | v1 | run_swarm_trials_2d | 8b5c3896 | AntiAir Tower | Wyvern x3 | 300 | 0.0% | 6.00 |
+| 2026-01-08T12:36:15 | v1 | run_swarm_trials_2d | ff2f7420 | AntiAir Tower | Wyvern x3 | 300 | 0.0% | 6.00 |
 
 **Unit snapshot (most recent)**
 
