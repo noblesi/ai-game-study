@@ -1,0 +1,21 @@
+﻿# run_pipeline (weekly_run?먯꽌 ?꾨떖)
+.\run_pipeline.ps1 -Seeds 10 -Trials 80 -DuelPairs 80 -SwarmPairs 160 -BaseSeed 200 -LevelMin 1 -LevelMax 10 -RandomPos:True -PosRange 8 -DefenderCounts "3,5,8" -AppendExperiments:False
+
+python train_baseline.py 
+  --train datasets\train_experiments_v1.csv 
+  --test  datasets\test_scenarios_v1.csv 
+  --k 30 
+  --group --group-key pair_key_full --group-stratified --tries 300 
+  --drop-overlap-groups 
+  --tune-threshold --threshold_metric recall 
+  --rf-grid 
+  --repeats 30 
+  --save-model models\rf_full_20260109.joblib --save-meta models\rf_full_20260109.json 
+  --report_name baseline_eval_20260109_recall_k30.md
+
+python make_portfolio_pack.py 
+  --config configs\portfolio_runs_current.json 
+  --test datasets\test_scenarios_v1.csv 
+  --outdir reports\portfolio_20260109 
+  --label-col label 
+  --top-errors 15
