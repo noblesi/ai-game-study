@@ -1,7 +1,7 @@
 {
   "date": "20260114",
-  "train": "datasets/train_experiments_v1.csv",
-  "test": "datasets/test_scenarios_v1.csv",
+  "train": "datasets\\train_experiments_v1.csv",
+  "test": "datasets\\test_scenarios_v1.csv",
   "label_col": "label_attacker_better",
   "group_key": "pair_key_full",
   "features": [
@@ -68,21 +68,21 @@
   ],
   "model_kind": "rf",
   "model_params": {
-    "max_depth": null,
+    "max_depth": 16,
     "max_features": "sqrt",
     "min_samples_leaf": 1,
-    "min_samples_split": 2,
-    "n_estimators": 400
+    "min_samples_split": 10,
+    "n_estimators": 800
   },
-  "thr": 0.29,
+  "thr": 0.09,
   "test_metrics": {
-    "acc": 0.5641025641025641,
-    "bal_acc": 0.5277777777777778,
-    "prec_1": 1.0,
-    "recall_1": 0.05555555555555555,
-    "f1_1": 0.10526315789473684,
-    "ap": 0.9586836571485695,
-    "roc_auc": 0.9682539682539683,
-    "thr": 0.29
+    "acc": 0.8974358974358975,
+    "bal_acc": 0.8928571428571428,
+    "prec_1": 0.9375,
+    "recall_1": 0.8333333333333334,
+    "f1_1": 0.8823529411764706,
+    "ap": 0.9753345560192042,
+    "roc_auc": 0.9761904761904762,
+    "thr": 0.09
   }
 }
